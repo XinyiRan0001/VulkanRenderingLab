@@ -1,4 +1,5 @@
-#include "VulkanApp.h"
+#include "Core/Window.h"
+#include "Core/VulkanContext.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -7,8 +8,13 @@ int main()
 {
     try
     {
-        VulkanApp app;
-        app.run();
+        Window window(1280, 720, "Vulkan Rendering Lab");
+        VulkanContext context(window);
+
+        while (!window.ShouldClose())
+        {
+            window.PollEvents();
+        }
     }
     catch (const std::exception& e)
     {

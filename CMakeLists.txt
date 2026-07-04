@@ -11,8 +11,20 @@ find_package(glm CONFIG REQUIRED)
 
 add_executable(VulkanRenderingLab
     src/main.cpp
-    src/VulkanApp.h
-    src/VulkanApp.cpp
+
+    src/Core/Window.h
+    src/Core/Window.cpp
+
+    src/Core/VulkanContext.h
+    src/Core/VulkanContext.cpp
+
+    src/Core/QueueFamily.h
+
+    src/Core/PhysicalDevice.h
+    src/Core/PhysicalDevice.cpp
+
+    src/Core/LogicalDevice.h
+    src/Core/LogicalDevice.cpp
 )
 
 target_link_libraries(VulkanRenderingLab
