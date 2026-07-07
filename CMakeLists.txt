@@ -25,6 +25,10 @@ add_executable(VulkanRenderingLab
 
     src/Core/LogicalDevice.h
     src/Core/LogicalDevice.cpp
+
+    src/Core/SwapchainSupport.h
+    src/Core/Swapchain.h
+    src/Core/Swapchain.cpp
 )
 
 target_link_libraries(VulkanRenderingLab

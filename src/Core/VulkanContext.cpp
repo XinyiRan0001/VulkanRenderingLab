@@ -3,6 +3,7 @@
 #include "Window.h"
 #include "PhysicalDevice.h"
 #include "LogicalDevice.h"
+#include "Swapchain.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -11,9 +12,16 @@ VulkanContext::VulkanContext(Window& window)
     : m_Window(window)
 {
     CreateInstance();
+    CreateSurface();
 
-    m_PhysicalDevice = std::make_unique<PhysicalDevice>(m_Instance);
+    m_PhysicalDevice = std::make_unique<PhysicalDevice>(m_Instance, m_Surface);
     m_LogicalDevice = std::make_unique<LogicalDevice>(*m_PhysicalDevice);
+    m_Swapchain = std::make_unique<Swapchain>(
+        m_Window,
+        *m_PhysicalDevice,
+        *m_LogicalDevice,
+        m_Surface
+    );
 
     std::cout << "VulkanContext created successfully." << std::endl;
 }
@@ -28,6 +36,23 @@ VulkanContext::~VulkanContext()
         vkDestroyInstance(m_Instance, nullptr);
         m_Instance = VK_NULL_HANDLE;
     }
+}
+
+void VulkanContext::CreateSurface()
+{
+    VkResult result = glfwCreateWindowSurface(
+        m_Instance,
+        m_Window.GetHandle(),
+        nullptr,
+        &m_Surface
+    );
+
+    if (result != VK_SUCCESS)
+    {
+        throw std::runtime_error("Failed to create window surface.");
+    }
+
+    std::cout << "Window surface created successfully." << std::endl;
 }
 
 void VulkanContext::CreateInstance()

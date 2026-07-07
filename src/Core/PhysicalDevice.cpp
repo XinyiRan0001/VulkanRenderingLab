@@ -4,8 +4,8 @@
 #include <stdexcept>
 #include <vector>
 
-PhysicalDevice::PhysicalDevice(VkInstance instance)
-    : m_Instance(instance)
+PhysicalDevice::PhysicalDevice(VkInstance instance, VkSurfaceKHR surface)
+    : m_Instance(instance), m_Surface(surface)
 {
     PickPhysicalDevice();
 }
@@ -49,7 +49,10 @@ void PhysicalDevice::PickPhysicalDevice()
 
         QueueFamilyIndices indices = FindQueueFamilies(device);
 
-        int score = indices.IsComplete() ? ScoreDevice(device) : -1;
+        SwapchainSupportDetails swapchainSupport = QuerySwapchainSupport(device);
+        bool swapchainAdequate = swapchainSupport.IsAdequate();
+
+        int score = indices.IsComplete() && swapchainAdequate ? ScoreDevice(device) : -1;
 
         std::cout << "  - " << properties.deviceName
             << " | Type: " << DeviceTypeToString(properties.deviceType)
@@ -59,6 +62,10 @@ void PhysicalDevice::PickPhysicalDevice()
             << VK_VERSION_PATCH(properties.apiVersion)
             << " | Graphics Queue: "
             << (indices.graphicsFamily.has_value() ? std::to_string(indices.graphicsFamily.value()) : "None")
+            << " | Present Queue: "
+            << (indices.presentFamily.has_value() ? std::to_string(indices.presentFamily.value()) : "None")
+            << " | Swapchain: "
+            << (swapchainAdequate ? "Yes" : "No")
             << " | Score: " << score
             << std::endl;
 
@@ -119,6 +126,19 @@ QueueFamilyIndices PhysicalDevice::FindQueueFamilies(VkPhysicalDevice device) co
             indices.graphicsFamily = i;
         }
 
+        VkBool32 presentSupport = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(
+            device,
+            i,
+            m_Surface,
+            &presentSupport
+        );
+
+        if (presentSupport)
+        {
+            indices.presentFamily = i;
+        }
+
         if (indices.IsComplete())
         {
             break;
@@ -126,6 +146,62 @@ QueueFamilyIndices PhysicalDevice::FindQueueFamilies(VkPhysicalDevice device) co
     }
 
     return indices;
+}
+
+SwapchainSupportDetails PhysicalDevice::QuerySwapchainSupport() const
+{
+    return QuerySwapchainSupport(m_PhysicalDevice);
+}
+
+SwapchainSupportDetails PhysicalDevice::QuerySwapchainSupport(VkPhysicalDevice device) const
+{
+    SwapchainSupportDetails details;
+
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+        device,
+        m_Surface,
+        &details.capabilities
+    );
+
+    uint32_t formatCount = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(
+        device,
+        m_Surface,
+        &formatCount,
+        nullptr
+    );
+
+    if (formatCount > 0)
+    {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(
+            device,
+            m_Surface,
+            &formatCount,
+            details.formats.data()
+        );
+    }
+
+    uint32_t presentModeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(
+        device,
+        m_Surface,
+        &presentModeCount,
+        nullptr
+    );
+
+    if (presentModeCount > 0)
+    {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(
+            device,
+            m_Surface,
+            &presentModeCount,
+            details.presentModes.data()
+        );
+    }
+
+    return details;
 }
 
 std::string PhysicalDevice::DeviceTypeToString(VkPhysicalDeviceType type) const
