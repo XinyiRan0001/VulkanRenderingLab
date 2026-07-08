@@ -46,6 +46,10 @@ add_executable(VulkanRenderingLab
     src/Core/ShaderUtils.cpp
     src/Core/GraphicsPipeline.h
     src/Core/GraphicsPipeline.cpp
+
+    src/Core/Vertex.h
+    src/Core/Buffer.h
+    src/Core/Buffer.cpp
 )
 
 target_link_libraries(VulkanRenderingLab

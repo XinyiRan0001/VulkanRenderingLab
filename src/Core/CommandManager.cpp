@@ -10,13 +10,15 @@ CommandManager::CommandManager(const LogicalDevice& logicalDevice,
     const Framebuffer& framebuffer,
     const RenderPass& renderPass,
     const Swapchain& swapchain,
-    const GraphicsPipeline& graphicsPipeline)
+    const GraphicsPipeline& graphicsPipeline,
+    const Buffer& vertexBuffer)
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
     m_Framebuffer(framebuffer),
     m_RenderPass(renderPass),
     m_Swapchain(swapchain),
-    m_GraphicsPipeline(graphicsPipeline)
+    m_GraphicsPipeline(graphicsPipeline),
+    m_VertexBuffer(vertexBuffer)
 {
     CreateCommandPool();
     AllocateCommandBuffers();
@@ -122,6 +124,17 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             m_GraphicsPipeline.GetPipeline()
+        );
+
+        VkBuffer vertexBuffers[] = { m_VertexBuffer.GetHandle() };
+        VkDeviceSize offsets[] = { 0 };
+
+        vkCmdBindVertexBuffers(
+            m_CommandBuffers[i],
+            0,
+            1,
+            vertexBuffers,
+            offsets
         );
 
         vkCmdDraw(m_CommandBuffers[i], 3, 1, 0, 0);

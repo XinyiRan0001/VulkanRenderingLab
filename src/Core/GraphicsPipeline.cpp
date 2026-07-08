@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 
+#include "Vertex.h"
+
 GraphicsPipeline::GraphicsPipeline(const LogicalDevice& logicalDevice,
     const RenderPass& renderPass,
     const Swapchain& swapchain)
@@ -78,8 +80,16 @@ void GraphicsPipeline::CreateGraphicsPipeline()
 
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertStage, fragStage };
 
+    auto bindingDescription = Vertex::GetBindingDescription();
+    auto attributeDescriptions = Vertex::GetAttributeDescriptions();
+
     VkPipelineVertexInputStateCreateInfo vertexInput{};
     vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = 1;
+    vertexInput.pVertexBindingDescriptions = &bindingDescription;
+    vertexInput.vertexAttributeDescriptionCount =
+        static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInput.pVertexAttributeDescriptions = attributeDescriptions.data();
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;

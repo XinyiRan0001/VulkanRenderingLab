@@ -9,7 +9,10 @@
 #include "CommandManager.h"
 #include "Renderer.h"
 #include "GraphicsPipeline.h"
+#include "Buffer.h"
+#include "Vertex.h"
 
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
@@ -45,13 +48,34 @@ VulkanContext::VulkanContext(Window& window)
         *m_Swapchain
     );
 
+    std::array<Vertex, 3> vertices =
+    {
+        Vertex{{ 0.0f, -0.5f }, { 1.0f, 0.2f, 0.2f }},
+        Vertex{{ 0.5f,  0.5f }, { 0.2f, 1.0f, 0.2f }},
+        Vertex{{-0.5f,  0.5f }, { 0.2f, 0.4f, 1.0f }}
+    };
+
+    VkDeviceSize bufferSize = sizeof(vertices);
+
+    m_VertexBuffer = std::make_unique<Buffer>(
+        *m_PhysicalDevice,
+        *m_LogicalDevice,
+        bufferSize,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    );
+
+    m_VertexBuffer->UploadData(vertices.data(), bufferSize);
+
     m_CommandManager = std::make_unique<CommandManager>(
         *m_LogicalDevice,
         *m_PhysicalDevice,
         *m_Framebuffer,
         *m_RenderPass,
         *m_Swapchain,
-        *m_GraphicsPipeline
+        *m_GraphicsPipeline,
+        *m_VertexBuffer
     );
 
     m_Renderer = std::make_unique<Renderer>(
@@ -67,6 +91,7 @@ VulkanContext::~VulkanContext()
 {
     m_Renderer.reset();
     m_CommandManager.reset();
+    m_VertexBuffer.reset();
     m_Framebuffer.reset();
     m_RenderPass.reset();
     m_Swapchain.reset();

@@ -9,6 +9,7 @@
 #include "RenderPass.h"
 #include "Swapchain.h"
 #include "GraphicsPipeline.h"
+#include "Buffer.h"
 
 #include <vector>
 
@@ -20,7 +21,8 @@ public:
         const Framebuffer& framebuffer,
         const RenderPass& renderPass,
         const Swapchain& swapchain,
-        const GraphicsPipeline& graphicsPipeline);
+        const GraphicsPipeline& graphicsPipeline,
+        const Buffer& vertexBuffer);
 
     ~CommandManager();
 
@@ -46,6 +48,7 @@ private:
     const RenderPass& m_RenderPass;
     const Swapchain& m_Swapchain;
     const GraphicsPipeline& m_GraphicsPipeline;
+    const Buffer& m_VertexBuffer;
 
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_CommandBuffers;

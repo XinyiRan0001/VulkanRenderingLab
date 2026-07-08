@@ -14,6 +14,7 @@ class Framebuffer;
 class CommandManager;
 class Renderer;
 class GraphicsPipeline;
+class Buffer;
 
 class VulkanContext
 {
@@ -41,6 +42,7 @@ private:
     std::unique_ptr<Framebuffer> m_Framebuffer;
     std::unique_ptr<CommandManager> m_CommandManager;
     std::unique_ptr<Renderer> m_Renderer;
+    std::unique_ptr<Buffer> m_VertexBuffer;
 
 private:
     void CreateInstance();
