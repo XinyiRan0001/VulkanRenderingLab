@@ -8,6 +8,7 @@
 #include "Framebuffer.h"
 #include "RenderPass.h"
 #include "Swapchain.h"
+#include "GraphicsPipeline.h"
 
 #include <vector>
 
@@ -18,7 +19,8 @@ public:
         const PhysicalDevice& physicalDevice,
         const Framebuffer& framebuffer,
         const RenderPass& renderPass,
-        const Swapchain& swapchain);
+        const Swapchain& swapchain,
+        const GraphicsPipeline& graphicsPipeline);
 
     ~CommandManager();
 
@@ -26,11 +28,16 @@ public:
     CommandManager& operator=(const CommandManager&) = delete;
 
     VkCommandPool GetCommandPool() const { return m_CommandPool; }
+
+    const std::vector<VkCommandBuffer>& GetCommandBuffers() const
+    {
+        return m_CommandBuffers;
+    }
+
     VkCommandBuffer GetCommandBuffer(uint32_t imageIndex) const
     {
         return m_CommandBuffers[imageIndex];
     }
-    const std::vector<VkCommandBuffer>& GetCommandBuffers() const { return m_CommandBuffers; }
 
 private:
     const LogicalDevice& m_LogicalDevice;
@@ -38,6 +45,7 @@ private:
     const Framebuffer& m_Framebuffer;
     const RenderPass& m_RenderPass;
     const Swapchain& m_Swapchain;
+    const GraphicsPipeline& m_GraphicsPipeline;
 
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_CommandBuffers;

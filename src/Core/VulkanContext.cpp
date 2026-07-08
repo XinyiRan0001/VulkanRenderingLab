@@ -8,6 +8,7 @@
 #include "Framebuffer.h"
 #include "CommandManager.h"
 #include "Renderer.h"
+#include "GraphicsPipeline.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -26,22 +27,33 @@ VulkanContext::VulkanContext(Window& window)
         *m_LogicalDevice,
         m_Surface
     );
+
     m_RenderPass = std::make_unique<RenderPass>(
         *m_LogicalDevice,
         *m_Swapchain
     );
+
     m_Framebuffer = std::make_unique<Framebuffer>(
         *m_LogicalDevice,
         *m_Swapchain,
         *m_RenderPass
     );
+
+    m_GraphicsPipeline = std::make_unique<GraphicsPipeline>(
+        *m_LogicalDevice,
+        *m_RenderPass,
+        *m_Swapchain
+    );
+
     m_CommandManager = std::make_unique<CommandManager>(
         *m_LogicalDevice,
         *m_PhysicalDevice,
         *m_Framebuffer,
         *m_RenderPass,
-        *m_Swapchain
+        *m_Swapchain,
+        *m_GraphicsPipeline
     );
+
     m_Renderer = std::make_unique<Renderer>(
         *m_LogicalDevice,
         *m_Swapchain,

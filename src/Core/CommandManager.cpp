@@ -3,16 +3,20 @@
 #include <iostream>
 #include <stdexcept>
 
+#include "GraphicsPipeline.h"
+
 CommandManager::CommandManager(const LogicalDevice& logicalDevice,
     const PhysicalDevice& physicalDevice,
     const Framebuffer& framebuffer,
     const RenderPass& renderPass,
-    const Swapchain& swapchain)
+    const Swapchain& swapchain,
+    const GraphicsPipeline& graphicsPipeline)
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
     m_Framebuffer(framebuffer),
     m_RenderPass(renderPass),
-    m_Swapchain(swapchain)
+    m_Swapchain(swapchain),
+    m_GraphicsPipeline(graphicsPipeline)
 {
     CreateCommandPool();
     AllocateCommandBuffers();
@@ -113,6 +117,14 @@ void CommandManager::RecordCommandBuffers()
             &renderPassInfo,
             VK_SUBPASS_CONTENTS_INLINE
         );
+
+        vkCmdBindPipeline(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_GraphicsPipeline.GetPipeline()
+        );
+
+        vkCmdDraw(m_CommandBuffers[i], 3, 1, 0, 0);
 
         vkCmdEndRenderPass(m_CommandBuffers[i]);
 
