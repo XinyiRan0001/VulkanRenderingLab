@@ -50,6 +50,9 @@ add_executable(VulkanRenderingLab
     src/Core/Vertex.h
     src/Core/Buffer.h
     src/Core/Buffer.cpp
+
+    src/Core/Image.h
+    src/Core/Image.cpp
 )
 
 target_link_libraries(VulkanRenderingLab

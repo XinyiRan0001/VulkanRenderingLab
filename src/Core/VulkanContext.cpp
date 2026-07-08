@@ -11,6 +11,7 @@
 #include "GraphicsPipeline.h"
 #include "Buffer.h"
 #include "Vertex.h"
+#include "Image.h"
 
 #include <array>
 #include <iostream>
@@ -37,10 +38,23 @@ VulkanContext::VulkanContext(Window& window)
         *m_Swapchain
     );
 
+    m_DepthImage = std::make_unique<Image>(
+        *m_PhysicalDevice,
+        *m_LogicalDevice,
+        m_Swapchain->GetExtent().width,
+        m_Swapchain->GetExtent().height,
+        VK_FORMAT_D32_SFLOAT,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        VK_IMAGE_ASPECT_DEPTH_BIT
+    );
+
     m_Framebuffer = std::make_unique<Framebuffer>(
         *m_LogicalDevice,
         *m_Swapchain,
-        *m_RenderPass
+        *m_RenderPass,
+        m_DepthImage->GetView()
     );
 
     m_GraphicsPipeline = std::make_unique<GraphicsPipeline>(
@@ -115,6 +129,7 @@ VulkanContext::~VulkanContext()
     m_VertexBuffer.reset();
     m_GraphicsPipeline.reset();
     m_Framebuffer.reset();
+    m_DepthImage.reset();
     m_RenderPass.reset();
     m_Swapchain.reset();
     m_LogicalDevice.reset();

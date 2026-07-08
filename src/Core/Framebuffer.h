@@ -14,7 +14,8 @@ class Framebuffer
 public:
     Framebuffer(const LogicalDevice& logicalDevice,
         const Swapchain& swapchain,
-        const RenderPass& renderPass);
+        const RenderPass& renderPass,
+        VkImageView depthImageView);
 
     ~Framebuffer();
 
@@ -27,6 +28,7 @@ private:
     const LogicalDevice& m_LogicalDevice;
     const Swapchain& m_Swapchain;
     const RenderPass& m_RenderPass;
+    VkImageView m_DepthImageView = VK_NULL_HANDLE;
 
     std::vector<VkFramebuffer> m_Framebuffers;
 

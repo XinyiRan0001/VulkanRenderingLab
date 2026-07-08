@@ -1,14 +1,17 @@
 #include "Framebuffer.h"
 
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
 Framebuffer::Framebuffer(const LogicalDevice& logicalDevice,
     const Swapchain& swapchain,
-    const RenderPass& renderPass)
+    const RenderPass& renderPass,
+    VkImageView depthImageView)
     : m_LogicalDevice(logicalDevice),
     m_Swapchain(swapchain),
-    m_RenderPass(renderPass)
+    m_RenderPass(renderPass),
+    m_DepthImageView(depthImageView)
 {
     CreateFramebuffers();
 
@@ -30,20 +33,22 @@ Framebuffer::~Framebuffer()
 void Framebuffer::CreateFramebuffers()
 {
     const auto& imageViews = m_Swapchain.GetImageViews();
+
     m_Framebuffers.resize(imageViews.size());
 
     for (size_t i = 0; i < imageViews.size(); i++)
     {
-        VkImageView attachments[] =
+        std::array<VkImageView, 2> attachments =
         {
-            imageViews[i]
+            imageViews[i],
+            m_DepthImageView
         };
 
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = m_RenderPass.GetHandle();
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+        framebufferInfo.pAttachments = attachments.data();
         framebufferInfo.width = m_Swapchain.GetExtent().width;
         framebufferInfo.height = m_Swapchain.GetExtent().height;
         framebufferInfo.layers = 1;

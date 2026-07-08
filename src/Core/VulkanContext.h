@@ -15,6 +15,7 @@ class CommandManager;
 class Renderer;
 class GraphicsPipeline;
 class Buffer;
+class Image;
 
 class VulkanContext
 {
@@ -39,6 +40,7 @@ private:
     std::unique_ptr<Swapchain> m_Swapchain;
     std::unique_ptr<RenderPass> m_RenderPass;
     std::unique_ptr<GraphicsPipeline> m_GraphicsPipeline;
+    std::unique_ptr<Image> m_DepthImage;
     std::unique_ptr<Framebuffer> m_Framebuffer;
     std::unique_ptr<CommandManager> m_CommandManager;
     std::unique_ptr<Renderer> m_Renderer;
