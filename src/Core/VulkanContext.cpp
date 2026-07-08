@@ -15,6 +15,7 @@
 #include <array>
 #include <iostream>
 #include <stdexcept>
+#include <cstdint>
 
 VulkanContext::VulkanContext(Window& window)
     : m_Window(window)
@@ -68,6 +69,24 @@ VulkanContext::VulkanContext(Window& window)
 
     m_VertexBuffer->UploadData(vertices.data(), bufferSize);
 
+    std::array<uint32_t, 3> indices =
+    {
+        0, 1, 2
+    };
+
+    VkDeviceSize indexBufferSize = sizeof(indices);
+
+    m_IndexBuffer = std::make_unique<Buffer>(
+        *m_PhysicalDevice,
+        *m_LogicalDevice,
+        indexBufferSize,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    );
+
+    m_IndexBuffer->UploadData(indices.data(), indexBufferSize);
+
     m_CommandManager = std::make_unique<CommandManager>(
         *m_LogicalDevice,
         *m_PhysicalDevice,
@@ -75,7 +94,8 @@ VulkanContext::VulkanContext(Window& window)
         *m_RenderPass,
         *m_Swapchain,
         *m_GraphicsPipeline,
-        *m_VertexBuffer
+        *m_VertexBuffer,
+        *m_IndexBuffer
     );
 
     m_Renderer = std::make_unique<Renderer>(
@@ -91,7 +111,9 @@ VulkanContext::~VulkanContext()
 {
     m_Renderer.reset();
     m_CommandManager.reset();
+    m_IndexBuffer.reset();
     m_VertexBuffer.reset();
+    m_GraphicsPipeline.reset();
     m_Framebuffer.reset();
     m_RenderPass.reset();
     m_Swapchain.reset();

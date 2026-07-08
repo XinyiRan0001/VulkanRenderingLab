@@ -11,14 +11,16 @@ CommandManager::CommandManager(const LogicalDevice& logicalDevice,
     const RenderPass& renderPass,
     const Swapchain& swapchain,
     const GraphicsPipeline& graphicsPipeline,
-    const Buffer& vertexBuffer)
+    const Buffer& vertexBuffer,
+    const Buffer& indexBuffer)
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
     m_Framebuffer(framebuffer),
     m_RenderPass(renderPass),
     m_Swapchain(swapchain),
     m_GraphicsPipeline(graphicsPipeline),
-    m_VertexBuffer(vertexBuffer)
+    m_VertexBuffer(vertexBuffer),
+    m_IndexBuffer(indexBuffer)
 {
     CreateCommandPool();
     AllocateCommandBuffers();
@@ -137,7 +139,21 @@ void CommandManager::RecordCommandBuffers()
             offsets
         );
 
-        vkCmdDraw(m_CommandBuffers[i], 3, 1, 0, 0);
+        vkCmdBindIndexBuffer(
+            m_CommandBuffers[i],
+            m_IndexBuffer.GetHandle(),
+            0,
+            VK_INDEX_TYPE_UINT32
+        );
+
+        vkCmdDrawIndexed(
+            m_CommandBuffers[i],
+            3,
+            1,
+            0,
+            0,
+            0
+        );
 
         vkCmdEndRenderPass(m_CommandBuffers[i]);
 

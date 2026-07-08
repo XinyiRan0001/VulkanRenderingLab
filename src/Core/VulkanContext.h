@@ -43,6 +43,7 @@ private:
     std::unique_ptr<CommandManager> m_CommandManager;
     std::unique_ptr<Renderer> m_Renderer;
     std::unique_ptr<Buffer> m_VertexBuffer;
+    std::unique_ptr<Buffer> m_IndexBuffer;
 
 private:
     void CreateInstance();

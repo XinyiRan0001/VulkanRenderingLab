@@ -22,7 +22,8 @@ public:
         const RenderPass& renderPass,
         const Swapchain& swapchain,
         const GraphicsPipeline& graphicsPipeline,
-        const Buffer& vertexBuffer);
+        const Buffer& vertexBuffer,
+        const Buffer& indexBuffer);
 
     ~CommandManager();
 
@@ -49,6 +50,7 @@ private:
     const Swapchain& m_Swapchain;
     const GraphicsPipeline& m_GraphicsPipeline;
     const Buffer& m_VertexBuffer;
+    const Buffer& m_IndexBuffer;
 
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_CommandBuffers;
