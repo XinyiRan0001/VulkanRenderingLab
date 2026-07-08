@@ -29,6 +29,18 @@ add_executable(VulkanRenderingLab
     src/Core/SwapchainSupport.h
     src/Core/Swapchain.h
     src/Core/Swapchain.cpp
+
+    src/Core/RenderPass.h
+    src/Core/RenderPass.cpp
+
+    src/Core/Framebuffer.h
+    src/Core/Framebuffer.cpp
+
+    src/Core/CommandManager.h
+    src/Core/CommandManager.cpp
+
+    src/Core/Renderer.h
+    src/Core/Renderer.cpp
 )
 
 target_link_libraries(VulkanRenderingLab

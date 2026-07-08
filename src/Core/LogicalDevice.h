@@ -16,12 +16,14 @@ public:
 
     VkDevice GetHandle() const;
     VkQueue GetGraphicsQueue() const;
+    VkQueue GetPresentQueue() const;
 
 private:
     const PhysicalDevice& m_PhysicalDevice;
 
     VkDevice m_Device = VK_NULL_HANDLE;
     VkQueue m_GraphicsQueue = VK_NULL_HANDLE;
+    VkQueue m_PresentQueue = VK_NULL_HANDLE;
 
 private:
     void CreateLogicalDevice();

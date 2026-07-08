@@ -1,5 +1,6 @@
 #include "LogicalDevice.h"
 
+#include <set>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -29,6 +30,11 @@ VkDevice LogicalDevice::GetHandle() const
 VkQueue LogicalDevice::GetGraphicsQueue() const
 {
     return m_GraphicsQueue;
+}
+
+VkQueue LogicalDevice::GetPresentQueue() const 
+{ 
+    return m_PresentQueue; 
 }
 
 void LogicalDevice::CreateLogicalDevice()
@@ -76,14 +82,15 @@ void LogicalDevice::CreateLogicalDevice()
         throw std::runtime_error("Failed to create logical device.");
     }
 
-    vkGetDeviceQueue(
-        m_Device,
-        indices.graphicsFamily.value(),
-        0,
-        &m_GraphicsQueue
-    );
+    vkGetDeviceQueue(m_Device, indices.graphicsFamily.value(), 0, &m_GraphicsQueue);
+    vkGetDeviceQueue(m_Device, indices.presentFamily.value(), 0, &m_PresentQueue);
 
     std::cout << "Graphics Queue Family: "
         << indices.graphicsFamily.value()
         << std::endl;
+
+    std::cout << "Present Queue Family: "
+        << indices.presentFamily.value()
+        << std::endl;
+
 }

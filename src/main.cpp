@@ -14,6 +14,7 @@ int main()
         while (!window.ShouldClose())
         {
             window.PollEvents();
+            context.DrawFrame();
         }
     }
     catch (const std::exception& e)

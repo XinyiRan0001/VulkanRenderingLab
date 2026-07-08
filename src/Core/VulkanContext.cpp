@@ -4,6 +4,10 @@
 #include "PhysicalDevice.h"
 #include "LogicalDevice.h"
 #include "Swapchain.h"
+#include "RenderPass.h"
+#include "Framebuffer.h"
+#include "CommandManager.h"
+#include "Renderer.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -22,12 +26,38 @@ VulkanContext::VulkanContext(Window& window)
         *m_LogicalDevice,
         m_Surface
     );
+    m_RenderPass = std::make_unique<RenderPass>(
+        *m_LogicalDevice,
+        *m_Swapchain
+    );
+    m_Framebuffer = std::make_unique<Framebuffer>(
+        *m_LogicalDevice,
+        *m_Swapchain,
+        *m_RenderPass
+    );
+    m_CommandManager = std::make_unique<CommandManager>(
+        *m_LogicalDevice,
+        *m_PhysicalDevice,
+        *m_Framebuffer,
+        *m_RenderPass,
+        *m_Swapchain
+    );
+    m_Renderer = std::make_unique<Renderer>(
+        *m_LogicalDevice,
+        *m_Swapchain,
+        *m_CommandManager
+    );
 
     std::cout << "VulkanContext created successfully." << std::endl;
 }
 
 VulkanContext::~VulkanContext()
 {
+    m_Renderer.reset();
+    m_CommandManager.reset();
+    m_Framebuffer.reset();
+    m_RenderPass.reset();
+    m_Swapchain.reset();
     m_LogicalDevice.reset();
     m_PhysicalDevice.reset();
 
@@ -85,4 +115,9 @@ void VulkanContext::CreateInstance()
     {
         throw std::runtime_error("Failed to create Vulkan instance.");
     }
+}
+
+void VulkanContext::DrawFrame()
+{
+    m_Renderer->DrawFrame();
 }

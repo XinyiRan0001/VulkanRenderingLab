@@ -24,6 +24,10 @@ public:
 
     VkFormat GetImageFormat() const { return m_ImageFormat; }
     VkExtent2D GetExtent() const { return m_Extent; }
+    VkSwapchainKHR GetHandle() const { return m_Swapchain; }
+
+    const std::vector<VkImageView>& GetImageViews() const { return m_ImageViews; }
+    size_t GetImageCount() const { return m_ImageViews.size(); }
 
 private:
     Window& m_Window;
