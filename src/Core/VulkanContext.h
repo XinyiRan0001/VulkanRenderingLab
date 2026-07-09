@@ -16,6 +16,7 @@ class Renderer;
 class GraphicsPipeline;
 class Buffer;
 class Image;
+class DescriptorManager;
 
 class VulkanContext
 {
@@ -46,6 +47,8 @@ private:
     std::unique_ptr<Renderer> m_Renderer;
     std::unique_ptr<Buffer> m_VertexBuffer;
     std::unique_ptr<Buffer> m_IndexBuffer;
+    std::unique_ptr<Buffer> m_UniformBuffer;
+    std::unique_ptr<DescriptorManager> m_DescriptorManager;
 
 private:
     void CreateInstance();

@@ -12,11 +12,15 @@
 #include "Buffer.h"
 #include "Vertex.h"
 #include "Image.h"
+#include "UniformBufferObject.h"
+#include "DescriptorManager.h"
 
 #include <array>
 #include <iostream>
 #include <stdexcept>
 #include <cstdint>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 VulkanContext::VulkanContext(Window& window)
     : m_Window(window)
@@ -63,11 +67,17 @@ VulkanContext::VulkanContext(Window& window)
         *m_Swapchain
     );
 
-    std::array<Vertex, 3> vertices =
+    std::array<Vertex, 8> vertices =
     {
-        Vertex{{ 0.0f, -0.5f }, { 1.0f, 0.2f, 0.2f }},
-        Vertex{{ 0.5f,  0.5f }, { 0.2f, 1.0f, 0.2f }},
-        Vertex{{-0.5f,  0.5f }, { 0.2f, 0.4f, 1.0f }}
+        Vertex{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        Vertex{{ 0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+        Vertex{{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}},
+        Vertex{{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f, 0.0f}},
+
+        Vertex{{-0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 1.0f}},
+        Vertex{{ 0.5f, -0.5f,  0.5f}, {0.0f, 1.0f, 1.0f}},
+        Vertex{{ 0.5f,  0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}},
+        Vertex{{-0.5f,  0.5f,  0.5f}, {0.2f, 0.5f, 1.0f}}
     };
 
     VkDeviceSize bufferSize = sizeof(vertices);
@@ -83,9 +93,31 @@ VulkanContext::VulkanContext(Window& window)
 
     m_VertexBuffer->UploadData(vertices.data(), bufferSize);
 
-    std::array<uint32_t, 3> indices =
+    std::array<uint32_t, 36> indices =
     {
-        0, 1, 2
+        // Front
+        4, 5, 6,
+        6, 7, 4,
+
+        // Back
+        1, 0, 3,
+        3, 2, 1,
+
+        // Left
+        0, 4, 7,
+        7, 3, 0,
+
+        // Right
+        5, 1, 2,
+        2, 6, 5,
+
+        // Top
+        3, 7, 6,
+        6, 2, 3,
+
+        // Bottom
+        0, 1, 5,
+        5, 4, 0
     };
 
     VkDeviceSize indexBufferSize = sizeof(indices);
@@ -101,6 +133,46 @@ VulkanContext::VulkanContext(Window& window)
 
     m_IndexBuffer->UploadData(indices.data(), indexBufferSize);
 
+    UniformBufferObject ubo{};
+
+    ubo.model = glm::mat4(1.0f);
+
+    ubo.view = glm::lookAt(
+        glm::vec3(1.5f, 1.5f, 2.5f),
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+
+    ubo.proj = glm::perspective(
+        glm::radians(45.0f),
+        m_Swapchain->GetExtent().width /
+        static_cast<float>(m_Swapchain->GetExtent().height),
+        0.1f,
+        10.0f
+    );
+
+    ubo.proj[1][1] *= -1.0f;
+
+    m_UniformBuffer = std::make_unique<Buffer>(
+        *m_PhysicalDevice,
+        *m_LogicalDevice,
+        sizeof(UniformBufferObject),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    );
+
+    m_UniformBuffer->UploadData(
+        &ubo,
+        sizeof(ubo)
+    );
+
+    m_DescriptorManager = std::make_unique<DescriptorManager>(
+        *m_LogicalDevice,
+        *m_GraphicsPipeline,
+        *m_UniformBuffer
+    );
+
     m_CommandManager = std::make_unique<CommandManager>(
         *m_LogicalDevice,
         *m_PhysicalDevice,
@@ -109,7 +181,8 @@ VulkanContext::VulkanContext(Window& window)
         *m_Swapchain,
         *m_GraphicsPipeline,
         *m_VertexBuffer,
-        *m_IndexBuffer
+        *m_IndexBuffer,
+        *m_DescriptorManager
     );
 
     m_Renderer = std::make_unique<Renderer>(

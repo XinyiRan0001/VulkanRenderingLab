@@ -10,10 +10,10 @@ class Buffer
 {
 public:
     Buffer(const PhysicalDevice& physicalDevice,
-           const LogicalDevice& logicalDevice,
-           VkDeviceSize size,
-           VkBufferUsageFlags usage,
-           VkMemoryPropertyFlags properties);
+        const LogicalDevice& logicalDevice,
+        VkDeviceSize size,
+        VkBufferUsageFlags usage,
+        VkMemoryPropertyFlags properties);
 
     ~Buffer();
 
@@ -21,6 +21,7 @@ public:
     Buffer& operator=(const Buffer&) = delete;
 
     VkBuffer GetHandle() const { return m_Buffer; }
+    VkDeviceSize GetSize() const { return m_Size; }
 
     void UploadData(const void* data, VkDeviceSize size);
 
@@ -30,6 +31,7 @@ private:
 
     VkBuffer m_Buffer = VK_NULL_HANDLE;
     VkDeviceMemory m_Memory = VK_NULL_HANDLE;
+    VkDeviceSize m_Size = 0;
 
 private:
     void CreateBuffer(VkDeviceSize size,

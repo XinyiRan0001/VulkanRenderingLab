@@ -18,6 +18,10 @@ public:
 
     VkPipeline GetPipeline() const { return m_GraphicsPipeline; }
     VkPipelineLayout GetLayout() const { return m_PipelineLayout; }
+    VkDescriptorSetLayout GetDescriptorSetLayout() const
+    {
+        return m_DescriptorSetLayout;
+    }
 
 private:
     const LogicalDevice& m_LogicalDevice;
@@ -26,8 +30,10 @@ private:
 
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_DescriptorSetLayout = VK_NULL_HANDLE;
 
 private:
     void CreateGraphicsPipeline();
+    void CreateDescriptorSetLayout();
     VkShaderModule CreateShaderModule(const std::vector<char>& code);
 };

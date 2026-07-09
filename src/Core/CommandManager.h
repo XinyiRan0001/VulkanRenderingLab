@@ -10,6 +10,7 @@
 #include "Swapchain.h"
 #include "GraphicsPipeline.h"
 #include "Buffer.h"
+#include "DescriptorManager.h"
 
 #include <vector>
 
@@ -23,7 +24,8 @@ public:
         const Swapchain& swapchain,
         const GraphicsPipeline& graphicsPipeline,
         const Buffer& vertexBuffer,
-        const Buffer& indexBuffer);
+        const Buffer& indexBuffer,
+        const DescriptorManager& descriptorManager);
 
     ~CommandManager();
 
@@ -51,6 +53,7 @@ private:
     const GraphicsPipeline& m_GraphicsPipeline;
     const Buffer& m_VertexBuffer;
     const Buffer& m_IndexBuffer;
+    const DescriptorManager& m_DescriptorManager;
 
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_CommandBuffers;

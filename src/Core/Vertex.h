@@ -4,10 +4,11 @@
 #include <GLFW/glfw3.h>
 
 #include <array>
+#include <cstddef>
 
 struct Vertex
 {
-    float position[2];
+    float position[3];
     float color[3];
 
     static VkVertexInputBindingDescription GetBindingDescription()
@@ -16,6 +17,7 @@ struct Vertex
         binding.binding = 0;
         binding.stride = sizeof(Vertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
         return binding;
     }
 
@@ -25,7 +27,7 @@ struct Vertex
 
         attributes[0].binding = 0;
         attributes[0].location = 0;
-        attributes[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributes[0].offset = offsetof(Vertex, position);
 
         attributes[1].binding = 0;

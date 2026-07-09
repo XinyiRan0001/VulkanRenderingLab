@@ -4,12 +4,13 @@
 #include <cstring>
 
 Buffer::Buffer(const PhysicalDevice& physicalDevice,
-               const LogicalDevice& logicalDevice,
-               VkDeviceSize size,
-               VkBufferUsageFlags usage,
-               VkMemoryPropertyFlags properties)
+    const LogicalDevice& logicalDevice,
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VkMemoryPropertyFlags properties)
     : m_PhysicalDevice(physicalDevice),
-      m_LogicalDevice(logicalDevice)
+    m_LogicalDevice(logicalDevice),
+    m_Size(size)
 {
     CreateBuffer(size, usage, properties);
 }

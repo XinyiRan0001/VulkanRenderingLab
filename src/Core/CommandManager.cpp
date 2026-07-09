@@ -1,19 +1,22 @@
 #include "CommandManager.h"
+#include "DescriptorManager.h"
+#include "GraphicsPipeline.h"
 
 #include <iostream>
 #include <stdexcept>
 #include <array>
 
-#include "GraphicsPipeline.h"
 
-CommandManager::CommandManager(const LogicalDevice& logicalDevice,
+CommandManager::CommandManager(
+    const LogicalDevice& logicalDevice,
     const PhysicalDevice& physicalDevice,
     const Framebuffer& framebuffer,
     const RenderPass& renderPass,
     const Swapchain& swapchain,
     const GraphicsPipeline& graphicsPipeline,
     const Buffer& vertexBuffer,
-    const Buffer& indexBuffer)
+    const Buffer& indexBuffer,
+    const DescriptorManager& descriptorManager)
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
     m_Framebuffer(framebuffer),
@@ -21,7 +24,8 @@ CommandManager::CommandManager(const LogicalDevice& logicalDevice,
     m_Swapchain(swapchain),
     m_GraphicsPipeline(graphicsPipeline),
     m_VertexBuffer(vertexBuffer),
-    m_IndexBuffer(indexBuffer)
+    m_IndexBuffer(indexBuffer),
+    m_DescriptorManager(descriptorManager)
 {
     CreateCommandPool();
     AllocateCommandBuffers();
@@ -130,6 +134,19 @@ void CommandManager::RecordCommandBuffers()
             m_GraphicsPipeline.GetPipeline()
         );
 
+        VkDescriptorSet descriptorSet = m_DescriptorManager.GetDescriptorSet();
+
+        vkCmdBindDescriptorSets(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_GraphicsPipeline.GetLayout(),
+            0,
+            1,
+            &descriptorSet,
+            0,
+            nullptr
+        );
+
         VkBuffer vertexBuffers[] = { m_VertexBuffer.GetHandle() };
         VkDeviceSize offsets[] = { 0 };
 
@@ -150,7 +167,7 @@ void CommandManager::RecordCommandBuffers()
 
         vkCmdDrawIndexed(
             m_CommandBuffers[i],
-            3,
+            36,
             1,
             0,
             0,

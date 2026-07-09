@@ -53,6 +53,11 @@ add_executable(VulkanRenderingLab
 
     src/Core/Image.h
     src/Core/Image.cpp
+
+    src/Core/UniformBufferObject.h
+
+    src/Core/DescriptorManager.h
+    src/Core/DescriptorManager.cpp
 )
 
 target_link_libraries(VulkanRenderingLab
