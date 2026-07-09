@@ -19,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <cstdint>
+#include <chrono>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -262,6 +263,43 @@ void VulkanContext::CreateInstance()
     {
         throw std::runtime_error("Failed to create Vulkan instance.");
     }
+}
+
+void VulkanContext::UpdateUniformBuffer()
+{
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    auto currentTime = std::chrono::high_resolution_clock::now();
+
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(
+        currentTime - startTime
+    ).count();
+
+    UniformBufferObject ubo{};
+
+    ubo.model = glm::rotate(
+        glm::mat4(1.0f),
+        time * glm::radians(45.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+
+    ubo.view = glm::lookAt(
+        glm::vec3(1.5f, 1.5f, 2.5f),
+        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
+
+    ubo.proj = glm::perspective(
+        glm::radians(45.0f),
+        m_Swapchain->GetExtent().width /
+        static_cast<float>(m_Swapchain->GetExtent().height),
+        0.1f,
+        10.0f
+    );
+
+    ubo.proj[1][1] *= -1.0f;
+
+    m_UniformBuffer->UploadData(&ubo, sizeof(ubo));
 }
 
 void VulkanContext::DrawFrame()

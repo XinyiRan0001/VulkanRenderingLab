@@ -23,7 +23,7 @@ class VulkanContext
 public:
     explicit VulkanContext(Window& window);
     ~VulkanContext();
-
+    void UpdateUniformBuffer();
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 

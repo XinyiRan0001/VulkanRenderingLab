@@ -14,6 +14,8 @@ int main()
         while (!window.ShouldClose())
         {
             window.PollEvents();
+
+            context.UpdateUniformBuffer();
             context.DrawFrame();
         }
     }
