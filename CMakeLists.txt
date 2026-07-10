@@ -9,6 +9,7 @@ find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(tinyobjloader CONFIG REQUIRED)
+find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 
 add_executable(VulkanRenderingLab
     src/main.cpp
@@ -63,6 +64,9 @@ add_executable(VulkanRenderingLab
     src/Core/MeshData.h
     src/Core/OBJLoader.h
     src/Core/OBJLoader.cpp
+
+    src/Core/TextureData.h
+    src/Core/TextureData.cpp
 )
 
 target_link_libraries(VulkanRenderingLab
@@ -76,4 +80,5 @@ target_link_libraries(VulkanRenderingLab
 target_include_directories(VulkanRenderingLab
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${STB_INCLUDE_DIRS}
 )

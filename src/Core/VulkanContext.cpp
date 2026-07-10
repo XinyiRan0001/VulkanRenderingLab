@@ -16,6 +16,7 @@
 #include "DescriptorManager.h"
 #include "OBJLoader.h"
 #include "MeshData.h"
+#include "TextureData.h"
 
 #include <array>
 #include <iostream>
@@ -72,6 +73,9 @@ VulkanContext::VulkanContext(Window& window)
 
     MeshData meshData = OBJLoader::Load(
         "assets/models/mary/Marry.obj"
+    );
+    TextureData textureData = TextureLoader::LoadRGBA(
+        "assets/models/mary/MC003_Kozakura_Mari.png"
     );
 
     VkDeviceSize vertexBufferSize =
