@@ -14,6 +14,8 @@
 #include "Image.h"
 #include "UniformBufferObject.h"
 #include "DescriptorManager.h"
+#include "OBJLoader.h"
+#include "MeshData.h"
 
 #include <array>
 #include <iostream>
@@ -68,60 +70,29 @@ VulkanContext::VulkanContext(Window& window)
         *m_Swapchain
     );
 
-    std::array<Vertex, 8> vertices =
-    {
-        Vertex{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-        Vertex{{ 0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-        Vertex{{ 0.5f,  0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}},
-        Vertex{{-0.5f,  0.5f, -0.5f}, {1.0f, 1.0f, 0.0f}},
+    MeshData meshData = OBJLoader::Load(
+        "assets/models/mary/Marry.obj"
+    );
 
-        Vertex{{-0.5f, -0.5f,  0.5f}, {1.0f, 0.0f, 1.0f}},
-        Vertex{{ 0.5f, -0.5f,  0.5f}, {0.0f, 1.0f, 1.0f}},
-        Vertex{{ 0.5f,  0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}},
-        Vertex{{-0.5f,  0.5f,  0.5f}, {0.2f, 0.5f, 1.0f}}
-    };
-
-    VkDeviceSize bufferSize = sizeof(vertices);
+    VkDeviceSize vertexBufferSize =
+        sizeof(Vertex) * meshData.vertices.size();
 
     m_VertexBuffer = std::make_unique<Buffer>(
         *m_PhysicalDevice,
         *m_LogicalDevice,
-        bufferSize,
+        vertexBufferSize,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     );
 
-    m_VertexBuffer->UploadData(vertices.data(), bufferSize);
+    m_VertexBuffer->UploadData(
+        meshData.vertices.data(),
+        vertexBufferSize
+    );
 
-    std::array<uint32_t, 36> indices =
-    {
-        // Front
-        4, 5, 6,
-        6, 7, 4,
-
-        // Back
-        1, 0, 3,
-        3, 2, 1,
-
-        // Left
-        0, 4, 7,
-        7, 3, 0,
-
-        // Right
-        5, 1, 2,
-        2, 6, 5,
-
-        // Top
-        3, 7, 6,
-        6, 2, 3,
-
-        // Bottom
-        0, 1, 5,
-        5, 4, 0
-    };
-
-    VkDeviceSize indexBufferSize = sizeof(indices);
+    VkDeviceSize indexBufferSize =
+        sizeof(uint32_t) * meshData.indices.size();
 
     m_IndexBuffer = std::make_unique<Buffer>(
         *m_PhysicalDevice,
@@ -132,7 +103,10 @@ VulkanContext::VulkanContext(Window& window)
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     );
 
-    m_IndexBuffer->UploadData(indices.data(), indexBufferSize);
+    m_IndexBuffer->UploadData(
+        meshData.indices.data(),
+        indexBufferSize
+    );
 
     UniformBufferObject ubo{};
 
@@ -183,7 +157,8 @@ VulkanContext::VulkanContext(Window& window)
         *m_GraphicsPipeline,
         *m_VertexBuffer,
         *m_IndexBuffer,
-        *m_DescriptorManager
+        *m_DescriptorManager,
+        static_cast<uint32_t>(meshData.indices.size())
     );
 
     m_Renderer = std::make_unique<Renderer>(
@@ -277,11 +252,14 @@ void VulkanContext::UpdateUniformBuffer()
 
     UniformBufferObject ubo{};
 
-    ubo.model = glm::rotate(
-        glm::mat4(1.0f),
-        time * glm::radians(45.0f),
-        glm::vec3(0.0f, 1.0f, 0.0f)
+    glm::mat4 model = glm::mat4(1.0f);
+
+    model = glm::scale(
+        model,
+        glm::vec3(0.3f)
     );
+
+    ubo.model = model;
 
     ubo.view = glm::lookAt(
         glm::vec3(1.5f, 1.5f, 2.5f),

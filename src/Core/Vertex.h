@@ -10,31 +10,54 @@ struct Vertex
 {
     float position[3];
     float color[3];
+    float normal[3];
+    float texCoord[2];
 
     static VkVertexInputBindingDescription GetBindingDescription()
     {
-        VkVertexInputBindingDescription binding{};
-        binding.binding = 0;
-        binding.stride = sizeof(Vertex);
-        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        VkVertexInputBindingDescription bindingDescription{};
 
-        return binding;
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
     }
 
-    static std::array<VkVertexInputAttributeDescription, 2> GetAttributeDescriptions()
+    static std::array<VkVertexInputAttributeDescription, 4>
+        GetAttributeDescriptions()
     {
-        std::array<VkVertexInputAttributeDescription, 2> attributes{};
+        std::array<VkVertexInputAttributeDescription, 4>
+            attributeDescriptions{};
 
-        attributes[0].binding = 0;
-        attributes[0].location = 0;
-        attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributes[0].offset = offsetof(Vertex, position);
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format =
+            VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[0].offset =
+            offsetof(Vertex, position);
 
-        attributes[1].binding = 0;
-        attributes[1].location = 1;
-        attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributes[1].offset = offsetof(Vertex, color);
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format =
+            VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset =
+            offsetof(Vertex, color);
 
-        return attributes;
+        attributeDescriptions[2].binding = 0;
+        attributeDescriptions[2].location = 2;
+        attributeDescriptions[2].format =
+            VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[2].offset =
+            offsetof(Vertex, normal);
+
+        attributeDescriptions[3].binding = 0;
+        attributeDescriptions[3].location = 3;
+        attributeDescriptions[3].format =
+            VK_FORMAT_R32G32_SFLOAT;
+        attributeDescriptions[3].offset =
+            offsetof(Vertex, texCoord);
+
+        return attributeDescriptions;
     }
 };

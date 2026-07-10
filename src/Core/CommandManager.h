@@ -25,7 +25,8 @@ public:
         const GraphicsPipeline& graphicsPipeline,
         const Buffer& vertexBuffer,
         const Buffer& indexBuffer,
-        const DescriptorManager& descriptorManager);
+        const DescriptorManager& descriptorManager,
+        uint32_t indexCount);
 
     ~CommandManager();
 
@@ -55,6 +56,7 @@ private:
     const Buffer& m_IndexBuffer;
     const DescriptorManager& m_DescriptorManager;
 
+    uint32_t m_IndexCount = 0;
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_CommandBuffers;
 

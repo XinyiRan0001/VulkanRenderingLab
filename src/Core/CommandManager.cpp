@@ -16,7 +16,8 @@ CommandManager::CommandManager(
     const GraphicsPipeline& graphicsPipeline,
     const Buffer& vertexBuffer,
     const Buffer& indexBuffer,
-    const DescriptorManager& descriptorManager)
+    const DescriptorManager& descriptorManager,
+    uint32_t indexCount)
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
     m_Framebuffer(framebuffer),
@@ -25,7 +26,8 @@ CommandManager::CommandManager(
     m_GraphicsPipeline(graphicsPipeline),
     m_VertexBuffer(vertexBuffer),
     m_IndexBuffer(indexBuffer),
-    m_DescriptorManager(descriptorManager)
+    m_DescriptorManager(descriptorManager),
+    m_IndexCount(indexCount)
 {
     CreateCommandPool();
     AllocateCommandBuffers();
@@ -167,7 +169,7 @@ void CommandManager::RecordCommandBuffers()
 
         vkCmdDrawIndexed(
             m_CommandBuffers[i],
-            36,
+            m_IndexCount,
             1,
             0,
             0,
