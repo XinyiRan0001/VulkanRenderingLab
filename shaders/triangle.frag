@@ -8,5 +8,8 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    outColor = vec4(1.0, 0.75, 0.85, 1.0);
+    vec3 normal = normalize(fragNormal);
+    vec3 debugNormal = normal * 0.5 + 0.5;
+
+    outColor = vec4(debugNormal, 1.0);
 }
