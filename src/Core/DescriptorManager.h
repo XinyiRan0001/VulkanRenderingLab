@@ -6,13 +6,15 @@
 #include "LogicalDevice.h"
 #include "Buffer.h"
 #include "GraphicsPipeline.h"
+#include "TextureImage.h"
 
 class DescriptorManager
 {
 public:
     DescriptorManager(const LogicalDevice& logicalDevice,
         const GraphicsPipeline& graphicsPipeline,
-        const Buffer& uniformBuffer);
+        const Buffer& uniformBuffer,
+        const TextureImage& textureImage);
 
     ~DescriptorManager();
 
@@ -25,6 +27,7 @@ private:
     const LogicalDevice& m_LogicalDevice;
     const GraphicsPipeline& m_GraphicsPipeline;
     const Buffer& m_UniformBuffer;
+    const TextureImage& m_TextureImage;
 
     VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;

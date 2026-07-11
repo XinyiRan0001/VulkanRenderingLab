@@ -17,6 +17,7 @@
 #include "OBJLoader.h"
 #include "MeshData.h"
 #include "TextureData.h"
+#include "TextureImage.h"
 
 #include <array>
 #include <iostream>
@@ -32,8 +33,15 @@ VulkanContext::VulkanContext(Window& window)
     CreateInstance();
     CreateSurface();
 
-    m_PhysicalDevice = std::make_unique<PhysicalDevice>(m_Instance, m_Surface);
-    m_LogicalDevice = std::make_unique<LogicalDevice>(*m_PhysicalDevice);
+    m_PhysicalDevice = std::make_unique<PhysicalDevice>(
+        m_Instance,
+        m_Surface
+    );
+
+    m_LogicalDevice = std::make_unique<LogicalDevice>(
+        *m_PhysicalDevice
+    );
+
     m_Swapchain = std::make_unique<Swapchain>(
         m_Window,
         *m_PhysicalDevice,
@@ -74,9 +82,20 @@ VulkanContext::VulkanContext(Window& window)
     MeshData meshData = OBJLoader::Load(
         "assets/models/mary/Marry.obj"
     );
+
     TextureData textureData = TextureLoader::LoadRGBA(
         "assets/models/mary/MC003_Kozakura_Mari.png"
     );
+
+    m_TextureImage = std::make_unique<TextureImage>(
+        *m_PhysicalDevice,
+        *m_LogicalDevice,
+        textureData
+    );
+
+    std::cout
+        << "[Context] Creating vertex buffer..."
+        << std::endl;
 
     VkDeviceSize vertexBufferSize =
         sizeof(Vertex) * meshData.vertices.size();
@@ -95,6 +114,14 @@ VulkanContext::VulkanContext(Window& window)
         vertexBufferSize
     );
 
+    std::cout
+        << "[Context] Vertex buffer uploaded."
+        << std::endl;
+
+    std::cout
+        << "[Context] Creating index buffer..."
+        << std::endl;
+
     VkDeviceSize indexBufferSize =
         sizeof(uint32_t) * meshData.indices.size();
 
@@ -112,9 +139,17 @@ VulkanContext::VulkanContext(Window& window)
         indexBufferSize
     );
 
+    std::cout
+        << "[Context] Index buffer uploaded."
+        << std::endl;
+
     UniformBufferObject ubo{};
 
-    ubo.model = glm::mat4(1.0f);
+    ubo.model = glm::rotate(
+        glm::mat4(1.0f),
+        glm::radians(180.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)
+    );
 
     ubo.view = glm::lookAt(
         glm::vec3(1.5f, 1.5f, 2.5f),
@@ -125,12 +160,18 @@ VulkanContext::VulkanContext(Window& window)
     ubo.proj = glm::perspective(
         glm::radians(45.0f),
         m_Swapchain->GetExtent().width /
-        static_cast<float>(m_Swapchain->GetExtent().height),
+        static_cast<float>(
+            m_Swapchain->GetExtent().height
+            ),
         0.1f,
         10.0f
     );
 
     ubo.proj[1][1] *= -1.0f;
+
+    std::cout
+        << "[Context] Creating uniform buffer..."
+        << std::endl;
 
     m_UniformBuffer = std::make_unique<Buffer>(
         *m_PhysicalDevice,
@@ -146,24 +187,51 @@ VulkanContext::VulkanContext(Window& window)
         sizeof(ubo)
     );
 
-    m_DescriptorManager = std::make_unique<DescriptorManager>(
-        *m_LogicalDevice,
-        *m_GraphicsPipeline,
-        *m_UniformBuffer
-    );
+    std::cout
+        << "[Context] Uniform buffer uploaded."
+        << std::endl;
 
-    m_CommandManager = std::make_unique<CommandManager>(
-        *m_LogicalDevice,
-        *m_PhysicalDevice,
-        *m_Framebuffer,
-        *m_RenderPass,
-        *m_Swapchain,
-        *m_GraphicsPipeline,
-        *m_VertexBuffer,
-        *m_IndexBuffer,
-        *m_DescriptorManager,
-        static_cast<uint32_t>(meshData.indices.size())
-    );
+    std::cout
+        << "[Context] Creating descriptor manager..."
+        << std::endl;
+
+    m_DescriptorManager =
+        std::make_unique<DescriptorManager>(
+            *m_LogicalDevice,
+            *m_GraphicsPipeline,
+            *m_UniformBuffer,
+            *m_TextureImage
+        );
+
+    std::cout
+        << "[Context] Descriptor manager ready."
+        << std::endl;
+
+    std::cout
+        << "[Context] Creating command manager..."
+        << std::endl;
+
+    m_CommandManager =
+        std::make_unique<CommandManager>(
+            *m_LogicalDevice,
+            *m_PhysicalDevice,
+            *m_Framebuffer,
+            *m_RenderPass,
+            *m_Swapchain,
+            *m_GraphicsPipeline,
+            *m_VertexBuffer,
+            *m_IndexBuffer,
+            *m_DescriptorManager,
+            meshData.subMeshes,
+            meshData.materials);
+
+    std::cout
+        << "[Context] Command manager ready."
+        << std::endl;
+
+    std::cout
+        << "[Context] Creating renderer..."
+        << std::endl;
 
     m_Renderer = std::make_unique<Renderer>(
         *m_LogicalDevice,
@@ -171,13 +239,20 @@ VulkanContext::VulkanContext(Window& window)
         *m_CommandManager
     );
 
-    std::cout << "VulkanContext created successfully." << std::endl;
+    std::cout
+        << "[Context] Renderer ready."
+        << std::endl;
+
+    std::cout
+        << "VulkanContext created successfully."
+        << std::endl;
 }
 
 VulkanContext::~VulkanContext()
 {
     m_Renderer.reset();
     m_CommandManager.reset();
+    m_TextureImage.reset();
     m_IndexBuffer.reset();
     m_VertexBuffer.reset();
     m_GraphicsPipeline.reset();
@@ -246,42 +321,44 @@ void VulkanContext::CreateInstance()
 
 void VulkanContext::UpdateUniformBuffer()
 {
-    static auto startTime = std::chrono::high_resolution_clock::now();
-
-    auto currentTime = std::chrono::high_resolution_clock::now();
-
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(
-        currentTime - startTime
-    ).count();
-
     UniformBufferObject ubo{};
 
-    glm::mat4 model = glm::mat4(1.0f);
-
-    model = glm::scale(
-        model,
-        glm::vec3(0.3f)
+    // Match the original GAMES202 scene:
+    // no rotation, scale 20.
+    ubo.model = glm::scale(
+        glm::mat4(1.0f),
+        glm::vec3(0.35f)
     );
 
-    ubo.model = model;
-
+    // Match cameraPosition = [30, 30, 30].
     ubo.view = glm::lookAt(
-        glm::vec3(1.5f, 1.5f, 2.5f),
-        glm::vec3(0.0f, 0.0f, 0.0f),
+        glm::vec3(0.0f, 0.8f, 3.5f),
+        glm::vec3(0.0f, 0.8f, 0.0f),
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
+
+    // Match PerspectiveCamera(75, aspect, 0.01, 1000).
+    const float aspect =
+        m_Swapchain->GetExtent().width /
+        static_cast<float>(
+            m_Swapchain->GetExtent().height
+            );
 
     ubo.proj = glm::perspective(
         glm::radians(45.0f),
         m_Swapchain->GetExtent().width /
         static_cast<float>(m_Swapchain->GetExtent().height),
         0.1f,
-        10.0f
+        100.0f
     );
 
+    // Vulkan framebuffer Y direction.
     ubo.proj[1][1] *= -1.0f;
 
-    m_UniformBuffer->UploadData(&ubo, sizeof(ubo));
+    m_UniformBuffer->UploadData(
+        &ubo,
+        sizeof(ubo)
+    );
 }
 
 void VulkanContext::DrawFrame()

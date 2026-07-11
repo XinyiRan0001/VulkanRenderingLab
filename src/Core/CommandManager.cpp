@@ -17,7 +17,9 @@ CommandManager::CommandManager(
     const Buffer& vertexBuffer,
     const Buffer& indexBuffer,
     const DescriptorManager& descriptorManager,
-    uint32_t indexCount)
+    const std::vector<SubMesh>& subMeshes,
+    const std::vector<MaterialData>& materials
+)
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
     m_Framebuffer(framebuffer),
@@ -27,13 +29,16 @@ CommandManager::CommandManager(
     m_VertexBuffer(vertexBuffer),
     m_IndexBuffer(indexBuffer),
     m_DescriptorManager(descriptorManager),
-    m_IndexCount(indexCount)
+    m_SubMeshes(subMeshes),
+    m_Materials(materials)
 {
     CreateCommandPool();
     AllocateCommandBuffers();
     RecordCommandBuffers();
 
-    std::cout << "CommandManager created successfully." << std::endl;
+    std::cout
+        << "CommandManager created successfully."
+        << std::endl;
 }
 
 CommandManager::~CommandManager()
@@ -167,14 +172,39 @@ void CommandManager::RecordCommandBuffers()
             VK_INDEX_TYPE_UINT32
         );
 
-        vkCmdDrawIndexed(
-            m_CommandBuffers[i],
-            m_IndexCount,
-            1,
-            0,
-            0,
-            0
-        );
+        for (const SubMesh& subMesh : m_SubMeshes)
+        {
+            int useTexture = 0;
+
+            if (subMesh.materialId >= 0 &&
+                static_cast<size_t>(subMesh.materialId) <
+                m_Materials.size())
+            {
+                useTexture =
+                    m_Materials[subMesh.materialId]
+                    .hasDiffuseTexture
+                    ? 1
+                    : 0;
+            }
+
+            vkCmdPushConstants(
+                m_CommandBuffers[i],
+                m_GraphicsPipeline.GetLayout(),
+                VK_SHADER_STAGE_FRAGMENT_BIT,
+                0,
+                sizeof(int),
+                &useTexture
+            );
+
+            vkCmdDrawIndexed(
+                m_CommandBuffers[i],
+                subMesh.indexCount,
+                1,
+                subMesh.firstIndex,
+                0,
+                0
+            );
+        }
 
         vkCmdEndRenderPass(m_CommandBuffers[i]);
 

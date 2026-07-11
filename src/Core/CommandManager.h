@@ -11,13 +11,15 @@
 #include "GraphicsPipeline.h"
 #include "Buffer.h"
 #include "DescriptorManager.h"
+#include "MeshData.h"
 
 #include <vector>
 
 class CommandManager
 {
 public:
-    CommandManager(const LogicalDevice& logicalDevice,
+    CommandManager(
+        const LogicalDevice& logicalDevice,
         const PhysicalDevice& physicalDevice,
         const Framebuffer& framebuffer,
         const RenderPass& renderPass,
@@ -26,18 +28,18 @@ public:
         const Buffer& vertexBuffer,
         const Buffer& indexBuffer,
         const DescriptorManager& descriptorManager,
-        uint32_t indexCount);
+        const std::vector<SubMesh>& subMeshes,
+        const std::vector<MaterialData>& materials
+    );
 
     ~CommandManager();
 
     CommandManager(const CommandManager&) = delete;
     CommandManager& operator=(const CommandManager&) = delete;
 
-    VkCommandPool GetCommandPool() const { return m_CommandPool; }
-
-    const std::vector<VkCommandBuffer>& GetCommandBuffers() const
+    VkCommandPool GetCommandPool() const
     {
-        return m_CommandBuffers;
+        return m_CommandPool;
     }
 
     VkCommandBuffer GetCommandBuffer(uint32_t imageIndex) const
@@ -56,7 +58,9 @@ private:
     const Buffer& m_IndexBuffer;
     const DescriptorManager& m_DescriptorManager;
 
-    uint32_t m_IndexCount = 0;
+    std::vector<SubMesh> m_SubMeshes;
+    std::vector<MaterialData> m_Materials;
+
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_CommandBuffers;
 

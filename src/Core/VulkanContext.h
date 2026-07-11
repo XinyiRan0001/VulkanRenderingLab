@@ -17,6 +17,7 @@ class GraphicsPipeline;
 class Buffer;
 class Image;
 class DescriptorManager;
+class TextureImage;
 
 class VulkanContext
 {
@@ -48,6 +49,7 @@ private:
     std::unique_ptr<Buffer> m_VertexBuffer;
     std::unique_ptr<Buffer> m_IndexBuffer;
     std::unique_ptr<Buffer> m_UniformBuffer;
+    std::unique_ptr<TextureImage> m_TextureImage;
     std::unique_ptr<DescriptorManager> m_DescriptorManager;
 
 private:

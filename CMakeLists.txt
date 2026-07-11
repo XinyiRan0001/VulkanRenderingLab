@@ -67,6 +67,9 @@ add_executable(VulkanRenderingLab
 
     src/Core/TextureData.h
     src/Core/TextureData.cpp
+
+    src/Core/TextureImage.h
+    src/Core/TextureImage.cpp
 )
 
 target_link_libraries(VulkanRenderingLab
