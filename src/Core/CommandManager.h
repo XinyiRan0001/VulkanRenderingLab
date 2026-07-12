@@ -12,6 +12,9 @@
 #include "Buffer.h"
 #include "DescriptorManager.h"
 #include "MeshData.h"
+#include "ShadowRenderPass.h"
+#include "ShadowFramebuffer.h"
+#include "ShadowPipeline.h"
 
 #include <vector>
 
@@ -25,6 +28,9 @@ public:
         const RenderPass& renderPass,
         const Swapchain& swapchain,
         const GraphicsPipeline& graphicsPipeline,
+        const ShadowRenderPass& shadowRenderPass,
+        const ShadowFramebuffer& shadowFramebuffer,
+        const ShadowPipeline& shadowPipeline,
         const Buffer& vertexBuffer,
         const Buffer& indexBuffer,
         const DescriptorManager& descriptorManager,
@@ -54,6 +60,9 @@ private:
     const RenderPass& m_RenderPass;
     const Swapchain& m_Swapchain;
     const GraphicsPipeline& m_GraphicsPipeline;
+    const ShadowRenderPass& m_ShadowRenderPass;
+    const ShadowFramebuffer& m_ShadowFramebuffer;
+    const ShadowPipeline& m_ShadowPipeline;
     const Buffer& m_VertexBuffer;
     const Buffer& m_IndexBuffer;
     const DescriptorManager& m_DescriptorManager;

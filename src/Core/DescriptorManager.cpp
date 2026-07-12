@@ -7,12 +7,16 @@ DescriptorManager::DescriptorManager(
     const LogicalDevice& logicalDevice,
     const GraphicsPipeline& graphicsPipeline,
     const Buffer& uniformBuffer,
-    const TextureImage& textureImage
+    const TextureImage& textureImage,
+    VkImageView shadowImageView,
+    VkSampler shadowSampler
 )
     : m_LogicalDevice(logicalDevice),
     m_GraphicsPipeline(graphicsPipeline),
     m_UniformBuffer(uniformBuffer),
-    m_TextureImage(textureImage)
+    m_TextureImage(textureImage),
+    m_ShadowImageView(shadowImageView),
+    m_ShadowSampler(shadowSampler)
 {
     CreateDescriptorPool();
     AllocateDescriptorSet();
@@ -47,7 +51,8 @@ void DescriptorManager::CreateDescriptorPool()
     poolSizes[1].type =
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
-    poolSizes[1].descriptorCount = 1;
+    // Diffuse texture + Shadow map
+    poolSizes[1].descriptorCount = 2;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType =
@@ -98,45 +103,74 @@ void DescriptorManager::UpdateDescriptorSet()
     bufferInfo.offset = 0;
     bufferInfo.range = m_UniformBuffer.GetSize();
 
-    VkDescriptorImageInfo imageInfo{};
-    imageInfo.imageLayout =
+    VkDescriptorImageInfo textureImageInfo{};
+    textureImageInfo.imageLayout =
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-    imageInfo.imageView =
+    textureImageInfo.imageView =
         m_TextureImage.GetImageView();
 
-    imageInfo.sampler =
+    textureImageInfo.sampler =
         m_TextureImage.GetSampler();
 
-    std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+    VkDescriptorImageInfo shadowImageInfo{};
+    shadowImageInfo.imageLayout =
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
+    shadowImageInfo.imageView =
+        m_ShadowImageView;
+
+    shadowImageInfo.sampler =
+        m_ShadowSampler;
+
+    std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+
+    // binding 0: UBO
     descriptorWrites[0].sType =
         VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 
     descriptorWrites[0].dstSet = m_DescriptorSet;
     descriptorWrites[0].dstBinding = 0;
-    descriptorWrites[0].dstArrayElement = 0;
+
     descriptorWrites[0].descriptorType =
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 
     descriptorWrites[0].descriptorCount = 1;
     descriptorWrites[0].pBufferInfo = &bufferInfo;
 
+    // binding 1: diffuse texture
     descriptorWrites[1].sType =
         VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 
     descriptorWrites[1].dstSet = m_DescriptorSet;
     descriptorWrites[1].dstBinding = 1;
-    descriptorWrites[1].dstArrayElement = 0;
+
     descriptorWrites[1].descriptorType =
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
     descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pImageInfo = &imageInfo;
+    descriptorWrites[1].pImageInfo =
+        &textureImageInfo;
+
+    // binding 2: shadow map
+    descriptorWrites[2].sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+
+    descriptorWrites[2].dstSet = m_DescriptorSet;
+    descriptorWrites[2].dstBinding = 2;
+
+    descriptorWrites[2].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    descriptorWrites[2].descriptorCount = 1;
+    descriptorWrites[2].pImageInfo =
+        &shadowImageInfo;
 
     vkUpdateDescriptorSets(
         m_LogicalDevice.GetHandle(),
-        static_cast<uint32_t>(descriptorWrites.size()),
+        static_cast<uint32_t>(
+            descriptorWrites.size()
+            ),
         descriptorWrites.data(),
         0,
         nullptr

@@ -7,14 +7,21 @@
 #include "Buffer.h"
 #include "GraphicsPipeline.h"
 #include "TextureImage.h"
+#include "ShadowRenderPass.h"
+#include "ShadowFramebuffer.h"
+#include "ShadowPipeline.h"
 
 class DescriptorManager
 {
 public:
-    DescriptorManager(const LogicalDevice& logicalDevice,
+    DescriptorManager(
+        const LogicalDevice& logicalDevice,
         const GraphicsPipeline& graphicsPipeline,
         const Buffer& uniformBuffer,
-        const TextureImage& textureImage);
+        const TextureImage& textureImage,
+        VkImageView shadowImageView,
+        VkSampler shadowSampler
+    );
 
     ~DescriptorManager();
 
@@ -22,6 +29,7 @@ public:
     DescriptorManager& operator=(const DescriptorManager&) = delete;
 
     VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
+
 
 private:
     const LogicalDevice& m_LogicalDevice;
@@ -31,6 +39,8 @@ private:
 
     VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
+    VkImageView m_ShadowImageView = VK_NULL_HANDLE;
+    VkSampler m_ShadowSampler = VK_NULL_HANDLE;
 
 private:
     void CreateDescriptorPool();

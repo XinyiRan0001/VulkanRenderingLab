@@ -5,7 +5,20 @@
 #include <iostream>
 #include <stdexcept>
 #include <array>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
+namespace
+{
+    constexpr uint32_t SHADOW_MAP_WIDTH = 2048;
+    constexpr uint32_t SHADOW_MAP_HEIGHT = 2048;
+
+    struct ShadowPushConstants
+    {
+        glm::mat4 lightViewProj{ 1.0f };
+        glm::mat4 model{ 1.0f };
+    };
+}
 
 CommandManager::CommandManager(
     const LogicalDevice& logicalDevice,
@@ -14,6 +27,9 @@ CommandManager::CommandManager(
     const RenderPass& renderPass,
     const Swapchain& swapchain,
     const GraphicsPipeline& graphicsPipeline,
+    const ShadowRenderPass& shadowRenderPass,
+    const ShadowFramebuffer& shadowFramebuffer,
+    const ShadowPipeline& shadowPipeline,
     const Buffer& vertexBuffer,
     const Buffer& indexBuffer,
     const DescriptorManager& descriptorManager,
@@ -26,6 +42,9 @@ CommandManager::CommandManager(
     m_RenderPass(renderPass),
     m_Swapchain(swapchain),
     m_GraphicsPipeline(graphicsPipeline),
+    m_ShadowRenderPass(shadowRenderPass),
+    m_ShadowFramebuffer(shadowFramebuffer),
+    m_ShadowPipeline(shadowPipeline),
     m_VertexBuffer(vertexBuffer),
     m_IndexBuffer(indexBuffer),
     m_DescriptorManager(descriptorManager),
@@ -113,6 +132,140 @@ void CommandManager::RecordCommandBuffers()
         {
             throw std::runtime_error("Failed to begin recording command buffer.");
         }
+
+        // =========================================================
+// Shadow Pass
+// =========================================================
+
+        VkClearValue shadowClearValue{};
+        shadowClearValue.depthStencil =
+        {
+            1.0f,
+            0
+        };
+
+        VkRenderPassBeginInfo shadowPassInfo{};
+        shadowPassInfo.sType =
+            VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+        shadowPassInfo.renderPass =
+            m_ShadowRenderPass.GetHandle();
+
+        shadowPassInfo.framebuffer =
+            m_ShadowFramebuffer.GetHandle();
+
+        shadowPassInfo.renderArea.offset =
+        {
+            0,
+            0
+        };
+
+        shadowPassInfo.renderArea.extent =
+        {
+            SHADOW_MAP_WIDTH,
+            SHADOW_MAP_HEIGHT
+        };
+
+        shadowPassInfo.clearValueCount = 1;
+        shadowPassInfo.pClearValues =
+            &shadowClearValue;
+
+        vkCmdBeginRenderPass(
+            m_CommandBuffers[i],
+            &shadowPassInfo,
+            VK_SUBPASS_CONTENTS_INLINE
+        );
+
+        vkCmdBindPipeline(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_ShadowPipeline.GetPipeline()
+        );
+
+        VkBuffer shadowVertexBuffers[] =
+        {
+            m_VertexBuffer.GetHandle()
+        };
+
+        VkDeviceSize shadowOffsets[] =
+        {
+            0
+        };
+
+        vkCmdBindVertexBuffers(
+            m_CommandBuffers[i],
+            0,
+            1,
+            shadowVertexBuffers,
+            shadowOffsets
+        );
+
+        vkCmdBindIndexBuffer(
+            m_CommandBuffers[i],
+            m_IndexBuffer.GetHandle(),
+            0,
+            VK_INDEX_TYPE_UINT32
+        );
+
+        // Must match the model matrix used by the main pass.
+        glm::mat4 modelMatrix =
+            glm::scale(
+                glm::mat4(1.0f),
+                glm::vec3(0.35f)
+            );
+
+        // Directional-light camera.
+        glm::mat4 lightView =
+            glm::lookAt(
+                glm::vec3(-3.0f, 5.0f, 4.0f),
+                glm::vec3(0.0f, 0.8f, 0.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f)
+            );
+
+        glm::mat4 lightProjection =
+            glm::ortho(
+                -3.0f,
+                3.0f,
+                -3.0f,
+                3.0f,
+                0.1f,
+                15.0f
+            );
+
+        // Vulkan projection Y correction.
+        lightProjection[1][1] *= -1.0f;
+
+        ShadowPushConstants shadowPushConstants{};
+        shadowPushConstants.lightViewProj =
+            lightProjection * lightView;
+
+        shadowPushConstants.model =
+            modelMatrix;
+
+        vkCmdPushConstants(
+            m_CommandBuffers[i],
+            m_ShadowPipeline.GetLayout(),
+            VK_SHADER_STAGE_VERTEX_BIT,
+            0,
+            sizeof(ShadowPushConstants),
+            &shadowPushConstants
+        );
+
+        for (const SubMesh& subMesh : m_SubMeshes)
+        {
+            vkCmdDrawIndexed(
+                m_CommandBuffers[i],
+                subMesh.indexCount,
+                1,
+                subMesh.firstIndex,
+                0,
+                0
+            );
+        }
+
+        vkCmdEndRenderPass(
+            m_CommandBuffers[i]
+        );
 
         VkRenderPassBeginInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;

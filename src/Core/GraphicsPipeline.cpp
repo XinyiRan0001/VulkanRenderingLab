@@ -82,10 +82,22 @@ void GraphicsPipeline::CreateDescriptorSetLayout()
     samplerLayoutBinding.stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings =
+    VkDescriptorSetLayoutBinding shadowLayoutBinding{};
+    shadowLayoutBinding.binding = 2;
+
+    shadowLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    shadowLayoutBinding.descriptorCount = 1;
+
+    shadowLayoutBinding.stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 3> bindings =
     {
         uboLayoutBinding,
-        samplerLayoutBinding
+        samplerLayoutBinding,
+        shadowLayoutBinding
     };
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

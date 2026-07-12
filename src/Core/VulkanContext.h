@@ -18,6 +18,9 @@ class Buffer;
 class Image;
 class DescriptorManager;
 class TextureImage;
+class ShadowRenderPass;
+class ShadowFramebuffer;
+class ShadowPipeline;
 
 class VulkanContext
 {
@@ -30,12 +33,14 @@ public:
 
     VkSurfaceKHR GetSurface() const { return m_Surface; }
     void DrawFrame();
+    void UpdateWindowTitle(double deltaTime);
 
 private:
     Window& m_Window;
 
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
+    VkSampler m_ShadowSampler = VK_NULL_HANDLE;
 
     std::unique_ptr<PhysicalDevice> m_PhysicalDevice;
     std::unique_ptr<LogicalDevice> m_LogicalDevice;
@@ -43,6 +48,9 @@ private:
     std::unique_ptr<RenderPass> m_RenderPass;
     std::unique_ptr<GraphicsPipeline> m_GraphicsPipeline;
     std::unique_ptr<Image> m_DepthImage;
+    std::unique_ptr<Image> m_ShadowDepthImage;
+    std::unique_ptr<ShadowRenderPass> m_ShadowRenderPass;
+    std::unique_ptr<ShadowFramebuffer> m_ShadowFramebuffer;
     std::unique_ptr<Framebuffer> m_Framebuffer;
     std::unique_ptr<CommandManager> m_CommandManager;
     std::unique_ptr<Renderer> m_Renderer;
@@ -51,8 +59,27 @@ private:
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<TextureImage> m_TextureImage;
     std::unique_ptr<DescriptorManager> m_DescriptorManager;
+    std::unique_ptr<ShadowPipeline> m_ShadowPipeline;
+
+    float m_CameraYaw = 0.0f;
+    float m_CameraPitch = 0.15f;
+    float m_CameraDistance = 3.5f;
+
+    bool m_IsDragging = false;
+
+    double m_LastMouseX = 0.0;
+    double m_LastMouseY = 0.0;
+
+    int m_ShadowMode = 3;
+
+    double m_LastTitleUpdateTime = 0.0;
+    double m_FrameTimeAccumulator = 0.0;
+    int m_FrameCount = 0;
+    
 
 private:
     void CreateInstance();
     void CreateSurface();
+    void SetupCameraControls();
+    void CreateShadowSampler();
 };

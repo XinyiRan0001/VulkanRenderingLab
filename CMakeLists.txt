@@ -70,6 +70,14 @@ add_executable(VulkanRenderingLab
 
     src/Core/TextureImage.h
     src/Core/TextureImage.cpp
+
+    src/Core/ShadowRenderPass.h
+    src/Core/ShadowRenderPass.cpp
+
+    src/Core/ShadowFramebuffer.h
+    src/Core/ShadowFramebuffer.cpp
+    src/Core/ShadowPipeline.h
+    src/Core/ShadowPipeline.cpp
 )
 
 target_link_libraries(VulkanRenderingLab
@@ -78,6 +86,11 @@ target_link_libraries(VulkanRenderingLab
         glfw
         glm::glm
         tinyobjloader::tinyobjloader
+)
+
+target_compile_definitions(VulkanRenderingLab
+    PRIVATE
+        GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 
 target_include_directories(VulkanRenderingLab
