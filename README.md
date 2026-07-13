@@ -8,10 +8,6 @@ Rather than directly reproducing the original WebGL-based coursework, I implemen
 
 The project implements a custom Vulkan rendering pipeline for loading and rendering textured OBJ models, generating real-time shadow maps, comparing multiple shadow filtering techniques, and controlling dynamic lighting and the camera at runtime.
 
-## Demo
-
-> Demo video and screenshots will be added here.
-
 ## Features
 
 ### Vulkan Rendering Pipeline
