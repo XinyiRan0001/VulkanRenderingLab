@@ -143,15 +143,7 @@ VulkanContext::VulkanContext(Window& window)
     << "[Shadow] Creating shadow pipeline..."
     << std::endl;
 
-    m_ShadowPipeline =
-    std::make_unique<ShadowPipeline>(
-        *m_LogicalDevice,
-        *m_ShadowRenderPass
-    );
-
-    std::cout
-    << "[Shadow] Shadow pipeline ready."
-    << std::endl;
+    
 
     CreateShadowSampler();
 
@@ -176,6 +168,16 @@ VulkanContext::VulkanContext(Window& window)
         *m_Swapchain
     );
 
+    m_ShadowPipeline =
+            std::make_unique<ShadowPipeline>(
+                *m_LogicalDevice,
+                *m_ShadowRenderPass,
+                m_GraphicsPipeline->GetDescriptorSetLayout()
+            );
+
+        std::cout
+        << "[Shadow] Shadow pipeline ready."
+        << std::endl;
     // =========================================================
     // Load Marry model
     // =========================================================
@@ -672,9 +674,40 @@ void VulkanContext::SetupCameraControls()
                 return;
             }
 
-            if (action != GLFW_PRESS)
+            if (action != GLFW_PRESS &&
+                action != GLFW_REPEAT)
             {
                 return;
+            }
+
+            constexpr float moveStep = 0.15f;
+
+            if (context->m_ManualPointLightControl)
+            {
+                if (key == GLFW_KEY_J)
+                {
+                    context->m_ManualPointLightPosition.x -= moveStep;
+                }
+                else if (key == GLFW_KEY_L)
+                {
+                    context->m_ManualPointLightPosition.x += moveStep;
+                }
+                else if (key == GLFW_KEY_I)
+                {
+                    context->m_ManualPointLightPosition.z -= moveStep;
+                }
+                else if (key == GLFW_KEY_K)
+                {
+                    context->m_ManualPointLightPosition.z += moveStep;
+                }
+                else if (key == GLFW_KEY_U)
+                {
+                    context->m_ManualPointLightPosition.y += moveStep;
+                }
+                else if (key == GLFW_KEY_O)
+                {
+                    context->m_ManualPointLightPosition.y -= moveStep;
+                }
             }
 
             if (key == GLFW_KEY_1)
@@ -727,6 +760,48 @@ void VulkanContext::SetupCameraControls()
                     GLFW_TRUE
                 );
             }
+            else if (key == GLFW_KEY_P)
+            {
+                context->m_PointLightEnabled =
+                    !context->m_PointLightEnabled;
+
+                std::cout
+                    << "[Point Light] "
+                    << (
+                        context->m_PointLightEnabled
+                        ? "Enabled"
+                        : "Disabled"
+                        )
+                    << std::endl;
+            }
+            else if (key == GLFW_KEY_SPACE)
+            {
+                context->m_PointLightAnimationEnabled =
+                    !context->m_PointLightAnimationEnabled;
+
+                std::cout
+                    << "[Point Light Animation] "
+                    << (
+                        context->m_PointLightAnimationEnabled
+                        ? "Running"
+                        : "Paused"
+                        )
+                    << std::endl;
+            }
+            else if (key == GLFW_KEY_M)
+            {
+                context->m_ManualPointLightControl =
+                    !context->m_ManualPointLightControl;
+
+                std::cout
+                    << "[Point Light] Control Mode: "
+                    << (
+                        context->m_ManualPointLightControl
+                        ? "Manual"
+                        : "Orbit"
+                        )
+                    << std::endl;
+            }
         }
     );
 }
@@ -776,12 +851,19 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         break;
     }
 
+    const char* pointLightMode =
+        m_ManualPointLightControl
+        ? "Manual Light"
+        : "Orbit Light";
+
     std::ostringstream title;
 
     title
         << "Vulkan Rendering Lab"
         << " | "
         << shadowModeName
+        << " | "
+        << pointLightMode
         << " | "
         << std::fixed
         << std::setprecision(1)
@@ -947,11 +1029,18 @@ void VulkanContext::UpdateUniformBuffer()
 {
     UniformBufferObject ubo{};
 
-    // no rotation, scale 20.
+    // =========================================================
+    // Model
+    // =========================================================
+
     ubo.model = glm::scale(
         glm::mat4(1.0f),
         glm::vec3(0.35f)
     );
+
+    // =========================================================
+    // Orbit camera
+    // =========================================================
 
     const glm::vec3 cameraTarget(
         0.0f,
@@ -987,7 +1076,10 @@ void VulkanContext::UpdateUniformBuffer()
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
 
-    // Match PerspectiveCamera(75, aspect, 0.01, 1000).
+    // =========================================================
+    // Main camera projection
+    // =========================================================
+
     const float aspect =
         m_Swapchain->GetExtent().width /
         static_cast<float>(
@@ -1003,33 +1095,136 @@ void VulkanContext::UpdateUniformBuffer()
 
     ubo.proj[1][1] *= -1.0f;
 
-    glm::mat4 lightView = glm::lookAt(
-        glm::vec3(-3.0f, 5.0f, 4.0f),
-        glm::vec3(0.0f, 0.8f, 0.0f),
-        glm::vec3(0.0f, 1.0f, 0.0f)
+    // =========================================================
+    // Shadow mode
+    // =========================================================
+
+    ubo.shadowSettings = glm::ivec4(
+        m_ShadowMode,
+        0,
+        0,
+        0
     );
 
-    glm::mat4 lightProjection = glm::ortho(
-        -3.0f,
-        3.0f,
-        -3.0f,
-        3.0f,
-        0.1f,
-        15.0f
+    // =========================================================
+    // Orbiting / manually controlled light
+    // =========================================================
+
+    const double currentTime =
+        glfwGetTime();
+
+    if (m_LastLightUpdateTime == 0.0)
+    {
+        m_LastLightUpdateTime =
+            currentTime;
+    }
+
+    const float deltaTime =
+        static_cast<float>(
+            currentTime -
+            m_LastLightUpdateTime
+            );
+
+    m_LastLightUpdateTime =
+        currentTime;
+
+    if (m_PointLightAnimationEnabled &&
+        !m_ManualPointLightControl)
+    {
+        constexpr float lightSpeed = 0.8f;
+
+        m_PointLightAngle +=
+            deltaTime * lightSpeed;
+    }
+
+    constexpr float lightRadius = 2.8f;
+    constexpr float lightHeight = 2.5f;
+
+    glm::vec3 pointLightPosition{};
+
+    if (m_ManualPointLightControl)
+    {
+        pointLightPosition =
+            m_ManualPointLightPosition;
+    }
+    else
+    {
+        pointLightPosition =
+            glm::vec3(
+                std::cos(m_PointLightAngle) *
+                lightRadius,
+
+                lightHeight,
+
+                std::sin(m_PointLightAngle) *
+                lightRadius
+            );
+
+        m_ManualPointLightPosition =
+            pointLightPosition;
+    }
+
+    ubo.pointLight.position =
+        glm::vec4(
+            pointLightPosition,
+            1.0f
+        );
+
+    ubo.pointLight.color =
+        glm::vec4(
+            1.0f,
+            0.35f,
+            0.15f,
+            m_PointLightEnabled
+            ? 2.5f
+            : 0.0f
+        );
+
+    // =========================================================
+    // Shadow camera follows the same moving light
+    // =========================================================
+
+    const glm::vec3 shadowTarget(
+        0.0f,
+        0.8f,
+        0.0f
     );
+
+    const glm::vec3 fixedLightPosition(
+        0.0f,
+        2.2f,
+        3.5f
+    );
+
+    glm::vec3 shadowLightPosition =
+        m_PointLightEnabled
+        ? pointLightPosition
+        : fixedLightPosition;
+
+    glm::mat4 lightView =
+        glm::lookAt(
+            shadowLightPosition,
+            shadowTarget,
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        );
+
+    glm::mat4 lightProjection =
+        glm::perspective(
+            glm::radians(70.0f),
+            1.0f,
+            0.1f,
+            12.0f
+        );
 
     lightProjection[1][1] *= -1.0f;
 
     ubo.lightViewProj =
-        lightProjection * lightView;
+        lightProjection *
+        lightView;
 
-    ubo.shadowSettings =
-        glm::ivec4(
-            m_ShadowMode,
-            0,
-            0,
-            0
-        );
+    // =========================================================
+    // Upload
+    // =========================================================
 
     m_UniformBuffer->UploadData(
         &ubo,

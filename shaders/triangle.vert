@@ -1,12 +1,21 @@
 #version 450
 
+struct PointLight
+{
+    vec4 position;
+    vec4 color;
+};
+
 layout(binding = 0) uniform UniformBufferObject
 {
     mat4 model;
     mat4 view;
     mat4 proj;
     mat4 lightViewProj;
+
     ivec4 shadowSettings;
+
+    PointLight pointLight;
 } ubo;
 
 layout(location = 0) in vec3 inPosition;

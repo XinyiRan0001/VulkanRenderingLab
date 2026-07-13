@@ -8,10 +8,12 @@
 
 ShadowPipeline::ShadowPipeline(
     const LogicalDevice& logicalDevice,
-    const ShadowRenderPass& shadowRenderPass
+    const ShadowRenderPass& shadowRenderPass,
+    VkDescriptorSetLayout descriptorSetLayout
 )
     : m_LogicalDevice(logicalDevice),
-    m_ShadowRenderPass(shadowRenderPass)
+    m_ShadowRenderPass(shadowRenderPass),
+    m_DescriptorSetLayout(descriptorSetLayout)
 {
     CreatePipeline();
 
@@ -221,24 +223,17 @@ void ShadowPipeline::CreatePipeline()
     depthStencil.stencilTestEnable =
         VK_FALSE;
 
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags =
-        VK_SHADER_STAGE_VERTEX_BIT;
-
-    pushConstantRange.offset = 0;
-    pushConstantRange.size =
-        sizeof(float) * 32;
-
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType =
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 
-    layoutInfo.setLayoutCount = 0;
-    layoutInfo.pSetLayouts = nullptr;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts =
+        &m_DescriptorSetLayout;
 
-    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pushConstantRangeCount = 0;
     layoutInfo.pPushConstantRanges =
-        &pushConstantRange;
+        nullptr;
 
     if (vkCreatePipelineLayout(
         m_LogicalDevice.GetHandle(),

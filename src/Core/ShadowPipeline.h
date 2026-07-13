@@ -11,7 +11,8 @@ class ShadowPipeline
 public:
     ShadowPipeline(
         const LogicalDevice& logicalDevice,
-        const ShadowRenderPass& shadowRenderPass
+        const ShadowRenderPass& shadowRenderPass,
+        VkDescriptorSetLayout descriptorSetLayout
     );
 
     ~ShadowPipeline();
@@ -35,6 +36,8 @@ private:
 
     VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
     VkPipeline m_Pipeline = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_DescriptorSetLayout =
+        VK_NULL_HANDLE;
 
 private:
     void CreatePipeline();

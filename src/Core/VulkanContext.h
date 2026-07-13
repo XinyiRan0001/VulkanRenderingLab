@@ -2,7 +2,7 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
-
+#include <glm/glm.hpp>
 #include <memory>
 
 class Window;
@@ -75,8 +75,20 @@ private:
     double m_LastTitleUpdateTime = 0.0;
     double m_FrameTimeAccumulator = 0.0;
     int m_FrameCount = 0;
-    
 
+    bool m_PointLightEnabled = true;
+    bool m_PointLightAnimationEnabled = true;
+
+    float m_PointLightAngle = 0.0f;
+    double m_LastLightUpdateTime = 0.0;
+    
+    glm::vec3 m_ManualPointLightPosition{
+    2.0f,
+    1.5f,
+    0.0f
+    };
+
+    bool m_ManualPointLightControl = false;
 private:
     void CreateInstance();
     void CreateSurface();

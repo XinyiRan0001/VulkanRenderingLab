@@ -12,12 +12,6 @@ namespace
 {
     constexpr uint32_t SHADOW_MAP_WIDTH = 2048;
     constexpr uint32_t SHADOW_MAP_HEIGHT = 2048;
-
-    struct ShadowPushConstants
-    {
-        glm::mat4 lightViewProj{ 1.0f };
-        glm::mat4 model{ 1.0f };
-    };
 }
 
 CommandManager::CommandManager(
@@ -121,21 +115,30 @@ void CommandManager::AllocateCommandBuffers()
 
 void CommandManager::RecordCommandBuffers()
 {
-    const auto& framebuffers = m_Framebuffer.GetHandles();
+    const auto& framebuffers =
+        m_Framebuffer.GetHandles();
 
-    for (size_t i = 0; i < m_CommandBuffers.size(); i++)
+    for (size_t i = 0;
+        i < m_CommandBuffers.size();
+        ++i)
     {
         VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
-        if (vkBeginCommandBuffer(m_CommandBuffers[i], &beginInfo) != VK_SUCCESS)
+        if (vkBeginCommandBuffer(
+            m_CommandBuffers[i],
+            &beginInfo
+        ) != VK_SUCCESS)
         {
-            throw std::runtime_error("Failed to begin recording command buffer.");
+            throw std::runtime_error(
+                "Failed to begin recording command buffer."
+            );
         }
 
-        // =========================================================
-// Shadow Pass
-// =========================================================
+        // =====================================================
+        // Shadow Pass
+        // =====================================================
 
         VkClearValue shadowClearValue{};
         shadowClearValue.depthStencil =
@@ -167,6 +170,7 @@ void CommandManager::RecordCommandBuffers()
         };
 
         shadowPassInfo.clearValueCount = 1;
+
         shadowPassInfo.pClearValues =
             &shadowClearValue;
 
@@ -180,6 +184,20 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             m_ShadowPipeline.GetPipeline()
+        );
+
+        VkDescriptorSet shadowDescriptorSet =
+            m_DescriptorManager.GetDescriptorSet();
+
+        vkCmdBindDescriptorSets(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_ShadowPipeline.GetLayout(),
+            0,
+            1,
+            &shadowDescriptorSet,
+            0,
+            nullptr
         );
 
         VkBuffer shadowVertexBuffers[] =
@@ -207,50 +225,6 @@ void CommandManager::RecordCommandBuffers()
             VK_INDEX_TYPE_UINT32
         );
 
-        // Must match the model matrix used by the main pass.
-        glm::mat4 modelMatrix =
-            glm::scale(
-                glm::mat4(1.0f),
-                glm::vec3(0.35f)
-            );
-
-        // Directional-light camera.
-        glm::mat4 lightView =
-            glm::lookAt(
-                glm::vec3(-3.0f, 5.0f, 4.0f),
-                glm::vec3(0.0f, 0.8f, 0.0f),
-                glm::vec3(0.0f, 1.0f, 0.0f)
-            );
-
-        glm::mat4 lightProjection =
-            glm::ortho(
-                -3.0f,
-                3.0f,
-                -3.0f,
-                3.0f,
-                0.1f,
-                15.0f
-            );
-
-        // Vulkan projection Y correction.
-        lightProjection[1][1] *= -1.0f;
-
-        ShadowPushConstants shadowPushConstants{};
-        shadowPushConstants.lightViewProj =
-            lightProjection * lightView;
-
-        shadowPushConstants.model =
-            modelMatrix;
-
-        vkCmdPushConstants(
-            m_CommandBuffers[i],
-            m_ShadowPipeline.GetLayout(),
-            VK_SHADER_STAGE_VERTEX_BIT,
-            0,
-            sizeof(ShadowPushConstants),
-            &shadowPushConstants
-        );
-
         for (const SubMesh& subMesh : m_SubMeshes)
         {
             vkCmdDrawIndexed(
@@ -267,20 +241,54 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i]
         );
 
-        VkRenderPassBeginInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderPassInfo.renderPass = m_RenderPass.GetHandle();
-        renderPassInfo.framebuffer = framebuffers[i];
+        // =====================================================
+        // Main Camera Pass
+        // =====================================================
 
-        renderPassInfo.renderArea.offset = { 0, 0 };
-        renderPassInfo.renderArea.extent = m_Swapchain.GetExtent();
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType =
+            VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+        renderPassInfo.renderPass =
+            m_RenderPass.GetHandle();
+
+        renderPassInfo.framebuffer =
+            framebuffers[i];
+
+        renderPassInfo.renderArea.offset =
+        {
+            0,
+            0
+        };
+
+        renderPassInfo.renderArea.extent =
+            m_Swapchain.GetExtent();
 
         std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = { {0.02f, 0.02f, 0.04f, 1.0f} };
-        clearValues[1].depthStencil = { 1.0f, 0 };
 
-        renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-        renderPassInfo.pClearValues = clearValues.data();
+        clearValues[0].color =
+        {
+            {
+                0.02f,
+                0.02f,
+                0.04f,
+                1.0f
+            }
+        };
+
+        clearValues[1].depthStencil =
+        {
+            1.0f,
+            0
+        };
+
+        renderPassInfo.clearValueCount =
+            static_cast<uint32_t>(
+                clearValues.size()
+                );
+
+        renderPassInfo.pClearValues =
+            clearValues.data();
 
         vkCmdBeginRenderPass(
             m_CommandBuffers[i],
@@ -294,7 +302,8 @@ void CommandManager::RecordCommandBuffers()
             m_GraphicsPipeline.GetPipeline()
         );
 
-        VkDescriptorSet descriptorSet = m_DescriptorManager.GetDescriptorSet();
+        VkDescriptorSet descriptorSet =
+            m_DescriptorManager.GetDescriptorSet();
 
         vkCmdBindDescriptorSets(
             m_CommandBuffers[i],
@@ -307,8 +316,15 @@ void CommandManager::RecordCommandBuffers()
             nullptr
         );
 
-        VkBuffer vertexBuffers[] = { m_VertexBuffer.GetHandle() };
-        VkDeviceSize offsets[] = { 0 };
+        VkBuffer vertexBuffers[] =
+        {
+            m_VertexBuffer.GetHandle()
+        };
+
+        VkDeviceSize offsets[] =
+        {
+            0
+        };
 
         vkCmdBindVertexBuffers(
             m_CommandBuffers[i],
@@ -330,14 +346,16 @@ void CommandManager::RecordCommandBuffers()
             int useTexture = 0;
 
             if (subMesh.materialId >= 0 &&
-                static_cast<size_t>(subMesh.materialId) <
-                m_Materials.size())
+                static_cast<size_t>(
+                    subMesh.materialId
+                    ) < m_Materials.size())
             {
                 useTexture =
-                    m_Materials[subMesh.materialId]
-                    .hasDiffuseTexture
+                    m_Materials[
+                        subMesh.materialId
+                    ].hasDiffuseTexture
                     ? 1
-                    : 0;
+                            : 0;
             }
 
             vkCmdPushConstants(
@@ -359,13 +377,25 @@ void CommandManager::RecordCommandBuffers()
             );
         }
 
-        vkCmdEndRenderPass(m_CommandBuffers[i]);
+        vkCmdEndRenderPass(
+            m_CommandBuffers[i]
+        );
 
-        if (vkEndCommandBuffer(m_CommandBuffers[i]) != VK_SUCCESS)
+        // =====================================================
+        // Finish Command Buffer
+        // =====================================================
+
+        if (vkEndCommandBuffer(
+            m_CommandBuffers[i]
+        ) != VK_SUCCESS)
         {
-            throw std::runtime_error("Failed to record command buffer.");
+            throw std::runtime_error(
+                "Failed to record command buffer."
+            );
         }
     }
 
-    std::cout << "Command buffers recorded successfully." << std::endl;
+    std::cout
+        << "Command buffers recorded successfully."
+        << std::endl;
 }

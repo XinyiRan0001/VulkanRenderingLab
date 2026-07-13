@@ -1,5 +1,23 @@
 #version 450
 
+struct PointLight
+{
+    vec4 position;
+    vec4 color;
+};
+
+layout(binding = 0) uniform UniformBufferObject
+{
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+    mat4 lightViewProj;
+
+    ivec4 shadowSettings;
+
+    PointLight pointLight;
+} ubo;
+
 layout(binding = 1) uniform sampler2D texSampler;
 layout(binding = 2) uniform sampler2D shadowMap;
 
@@ -17,6 +35,29 @@ layout(location = 5) flat in int fragShadowMode;
 
 layout(location = 0) out vec4 outColor;
 
+
+// =============================================================
+// Shadow depth utilities
+// =============================================================
+
+float LinearizeShadowDepth(float depth)
+{
+    const float nearPlane = 0.1;
+    const float farPlane = 12.0;
+
+    return
+        nearPlane * farPlane /
+        (
+            farPlane -
+            depth * (farPlane - nearPlane)
+        );
+}
+
+
+// =============================================================
+// PCSS blocker search
+// =============================================================
+
 float FindBlocker(
     vec2 uv,
     float receiverDepth,
@@ -27,34 +68,35 @@ float FindBlocker(
         1.0 /
         vec2(textureSize(shadowMap, 0));
 
-    // Temporary fixed search radius.
-    float searchRadius = 6.0;
+    const float searchRadius = 5.0;
 
     float blockerDepthSum = 0.0;
     int blockerCount = 0;
 
-    for (int x = -3; x <= 3; ++x)
+    for (int x = -2; x <= 2; ++x)
     {
-        for (int y = -3; y <= 3; ++y)
+        for (int y = -2; y <= 2; ++y)
         {
-            vec2 offset =
+            vec2 sampleUV =
+                uv +
                 vec2(x, y) *
                 texelSize *
-                searchRadius;
+                searchRadius /
+                2.0;
 
             float sampleDepth =
                 texture(
                     shadowMap,
-                    uv + offset
+                    sampleUV
                 ).r;
 
-            // A blocker is closer to the light
-            // than the receiver.
             if (sampleDepth <
                 receiverDepth - bias)
             {
                 blockerDepthSum +=
-                    sampleDepth;
+                    LinearizeShadowDepth(
+                        sampleDepth
+                    );
 
                 blockerCount++;
             }
@@ -66,9 +108,15 @@ float FindBlocker(
         return -1.0;
     }
 
-    return blockerDepthSum /
+    return
+        blockerDepthSum /
         float(blockerCount);
 }
+
+
+// =============================================================
+// Hard shadow
+// =============================================================
 
 float CalculateHardShadow(
     vec2 uv,
@@ -82,10 +130,16 @@ float CalculateHardShadow(
             uv
         ).r;
 
-    return receiverDepth - bias > closestDepth
+    return
+        receiverDepth - bias > closestDepth
         ? 1.0
         : 0.0;
 }
+
+
+// =============================================================
+// Fixed 3x3 PCF
+// =============================================================
 
 float CalculatePCF(
     vec2 uv,
@@ -122,6 +176,11 @@ float CalculatePCF(
     return shadow / 9.0;
 }
 
+
+// =============================================================
+// Shadow mode selection
+// =============================================================
+
 float CalculateShadow(
     vec4 lightSpacePosition,
     vec3 normal,
@@ -148,56 +207,70 @@ float CalculateShadow(
     float receiverDepth =
         projected.z;
 
-    float bias = max(
-        0.0015 *
-        (1.0 - dot(normal, lightDirection)),
-        0.0003
-    );
+    float bias =
+        max(
+            0.0012 *
+            (1.0 - dot(normal, lightDirection)),
+            0.00025
+        );
 
-    // Mode 1: Hard Shadow
+    // Mode 1: hard shadow
     if (fragShadowMode == 1)
     {
-        return CalculateHardShadow(
-            projected.xy,
-            receiverDepth,
-            bias
-        );
+        return
+            CalculateHardShadow(
+                projected.xy,
+                receiverDepth,
+                bias
+            );
     }
 
-    // Mode 2: PCF
+    // Mode 2: fixed PCF
     if (fragShadowMode == 2)
     {
-        return CalculatePCF(
-            projected.xy,
-            receiverDepth,
-            bias
-        );
+        return
+            CalculatePCF(
+                projected.xy,
+                receiverDepth,
+                bias
+            );
     }
 
     // Mode 3: PCSS
-    float avgBlockerDepth =
+    float avgBlockerLinearDepth =
         FindBlocker(
             projected.xy,
             receiverDepth,
             bias
         );
 
-    if (avgBlockerDepth < 0.0)
+    if (avgBlockerLinearDepth < 0.0)
     {
         return 0.0;
     }
 
-    float penumbra =
-        (receiverDepth - avgBlockerDepth) /
-        max(avgBlockerDepth, 0.0001);
+    float receiverLinearDepth =
+        LinearizeShadowDepth(
+            receiverDepth
+        );
 
-    const float lightSize = 35.0;
+    float penumbraRatio =
+        (
+            receiverLinearDepth -
+            avgBlockerLinearDepth
+        ) /
+        max(
+            avgBlockerLinearDepth,
+            0.0001
+        );
+
+    const float lightRadius = 18.0;
 
     float filterRadius =
         clamp(
-            penumbra * lightSize,
+            penumbraRatio * lightRadius,
             1.0,
-            12.0
+            18.0
         );
 
     vec2 texelSize =
@@ -233,11 +306,22 @@ float CalculateShadow(
         }
     }
 
-    return shadow / sampleCount;
+    return
+        shadow /
+        sampleCount;
 }
+
+
+// =============================================================
+// Main
+// =============================================================
 
 void main()
 {
+    // ---------------------------------------------------------
+    // Shadow map debug view
+    // ---------------------------------------------------------
+
     if (fragShadowMode == 4)
     {
         vec3 projected =
@@ -279,52 +363,191 @@ void main()
 
         return;
     }
+
+    // ---------------------------------------------------------
+    // Base material colour
+    // ---------------------------------------------------------
+
     vec3 baseColor;
 
     if (material.useTexture != 0)
     {
         baseColor =
-            texture(texSampler, fragTexCoord).rgb;
+            texture(
+                texSampler,
+                fragTexCoord
+            ).rgb;
     }
     else
     {
-        baseColor = fragColor;
+        baseColor =
+            fragColor;
     }
 
-    vec3 normal = normalize(fragNormal);
-
-    vec3 lightPosition =
-        vec3(-3.0, 5.0, 4.0);
-
-    vec3 lightDirection =
+    vec3 normal =
         normalize(
-            lightPosition - fragWorldPosition
+            fragNormal
         );
 
-    float diffuse =
-        max(dot(normal, lightDirection), 0.0);
+    // ---------------------------------------------------------
+    // Ambient light
+    // ---------------------------------------------------------
+
+    const float ambientStrength = 0.22;
+
+    vec3 ambientLighting =
+        baseColor *
+        ambientStrength;
+
+    // ---------------------------------------------------------
+    // Fixed front white light
+    // ---------------------------------------------------------
+
+    const vec3 fixedLightPosition =
+        vec3(
+            0.0,
+            2.2,
+            3.5
+        );
+
+    vec3 toFixedLight =
+        fixedLightPosition -
+        fragWorldPosition;
+
+    float fixedLightDistance =
+        length(
+            toFixedLight
+        );
+
+    vec3 fixedLightDirection =
+        normalize(
+            toFixedLight
+        );
+
+    float fixedDiffuse =
+        max(
+            dot(
+                normal,
+                fixedLightDirection
+            ),
+            0.0
+        );
+
+    float fixedAttenuation =
+        1.0 /
+        (
+            1.0 +
+            0.12 * fixedLightDistance +
+            0.04 *
+            fixedLightDistance *
+            fixedLightDistance
+        );
+
+    const float fixedLightIntensity = 1.4;
+
+    vec3 fixedLighting =
+        baseColor *
+        vec3(1.0) *
+        fixedDiffuse *
+        fixedAttenuation *
+        fixedLightIntensity;
+
+    // ---------------------------------------------------------
+    // Orbiting point light
+    // ---------------------------------------------------------
+
+    vec3 pointLightPosition =
+        ubo.pointLight.position.xyz;
+
+    vec3 toPointLight =
+        pointLightPosition -
+        fragWorldPosition;
+
+    float pointLightDistance =
+        length(
+            toPointLight
+        );
+
+    vec3 pointLightDirection =
+        normalize(
+            toPointLight
+        );
+
+    float pointDiffuse =
+        max(
+            dot(
+                normal,
+                pointLightDirection
+            ),
+            0.0
+        );
+
+    float pointAttenuation =
+        1.0 /
+        (
+            1.0 +
+            0.35 * pointLightDistance +
+            0.20 *
+            pointLightDistance *
+            pointLightDistance
+        );
+
+    bool pointLightEnabled =
+        ubo.pointLight.color.a >
+        0.001;
+
+    vec3 pointLighting =
+        baseColor *
+        ubo.pointLight.color.rgb *
+        ubo.pointLight.color.a *
+        pointDiffuse *
+        pointAttenuation;
+
+    // ---------------------------------------------------------
+    // The current shadow map belongs to one light:
+    //
+    // Point light enabled:
+    //     shadow map follows the orbiting light.
+    //
+    // Point light disabled:
+    //     shadow map uses the fixed front light.
+    // ---------------------------------------------------------
+
+    vec3 shadowLightDirection =
+        pointLightEnabled
+        ? pointLightDirection
+        : fixedLightDirection;
 
     float shadow =
         CalculateShadow(
             fragLightSpacePosition,
             normal,
-            lightDirection
+            shadowLightDirection
         );
 
-    const float ambientStrength = 0.30;
-    const float diffuseStrength = 0.70;
+    if (pointLightEnabled)
+    {
+        pointLighting *=
+            (1.0 - shadow);
+    }
+    else
+    {
+        fixedLighting *=
+            (1.0 - shadow);
+    }
 
-    vec3 ambient =
-        baseColor * ambientStrength;
+    // ---------------------------------------------------------
+    // Final output
+    // ---------------------------------------------------------
 
-    vec3 diffuseLighting =
-        baseColor *
-        diffuseStrength *
-        diffuse *
-        (1.0 - shadow);
+    vec3 finalLighting =
+        ambientLighting +
+        fixedLighting +
+        pointLighting;
 
-    outColor = vec4(
-        ambient + diffuseLighting,
-        1.0
-    );
+    outColor =
+        vec4(
+            finalLighting,
+            1.0
+        );
 }
