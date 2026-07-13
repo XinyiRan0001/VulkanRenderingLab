@@ -82,9 +82,10 @@ Perspective shadow depth is linearized before calculating the penumbra ratio.
 This allows shadows to remain relatively sharp near contact areas while becoming softer as the receiver moves farther from the blocker.
 
 ### Orbiting Dynamic Light
-![Hard Shadows](docs/images/hard-shadow.mp4)
-![PCF Shadows](docs/images/pcf.mp4)
-![PCSS Soft Shadows](docs/images/pcss.mp4)
+https://github.com/user-attachments/assets/9ce20669-7ae5-43dc-8085-d4cebafab918
+https://github.com/user-attachments/assets/e8d11fc0-9672-47c4-b9ee-db14b131cffd
+https://github.com/user-attachments/assets/fd032316-058d-4fc3-b369-3c6c4de9819c
+
 The colored local light automatically orbits around the model along the Y axis. Its position is updated at runtime and used to calculate both direct lighting and the shadow camera transformation.
 
 This allows the illumination and PCSS shadow projection to move together in real time.
