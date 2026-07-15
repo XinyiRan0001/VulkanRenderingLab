@@ -802,6 +802,22 @@ void VulkanContext::SetupCameraControls()
                         )
                     << std::endl;
             }
+            else if (
+                key == GLFW_KEY_B &&
+                action == GLFW_PRESS
+                )
+            {
+                std::cout
+                    << "[Input] B pressed."
+                    << std::endl;
+
+                if (context->m_Renderer != nullptr)
+                {
+                    context->m_Renderer->StartBenchmark(
+                        context->m_ShadowMode
+                    );
+                }
+            }
         }
     );
 }

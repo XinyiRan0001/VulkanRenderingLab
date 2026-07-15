@@ -21,6 +21,13 @@
 class CommandManager
 {
 public:
+    struct GpuTimingResult
+    {
+        double shadowPassMs = 0.0;
+        double mainPassMs = 0.0;
+        double totalGpuMs = 0.0;
+    };
+
     CommandManager(
         const LogicalDevice& logicalDevice,
         const PhysicalDevice& physicalDevice,
@@ -53,6 +60,10 @@ public:
         return m_CommandBuffers[imageIndex];
     }
 
+    bool GetGpuTimingResult(
+        GpuTimingResult& result
+    ) const;
+
 private:
     const LogicalDevice& m_LogicalDevice;
     const PhysicalDevice& m_PhysicalDevice;
@@ -71,10 +82,15 @@ private:
     std::vector<MaterialData> m_Materials;
 
     VkCommandPool m_CommandPool = VK_NULL_HANDLE;
+    VkQueryPool m_TimestampQueryPool = VK_NULL_HANDLE;
+
+    float m_TimestampPeriod = 0.0f;
+
     std::vector<VkCommandBuffer> m_CommandBuffers;
 
 private:
     void CreateCommandPool();
+    void CreateTimestampQueryPool();
     void AllocateCommandBuffers();
     void RecordCommandBuffers();
 };

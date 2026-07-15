@@ -46,6 +46,24 @@ CommandManager::CommandManager(
     m_Materials(materials)
 {
     CreateCommandPool();
+    CreateTimestampQueryPool();
+
+    VkPhysicalDeviceProperties deviceProperties{};
+
+    vkGetPhysicalDeviceProperties(
+        m_PhysicalDevice.GetHandle(),
+        &deviceProperties
+    );
+
+    m_TimestampPeriod =
+        deviceProperties.limits.timestampPeriod;
+
+    std::cout
+        << "[GPU Profiler] Timestamp period: "
+        << m_TimestampPeriod
+        << " ns"
+        << std::endl;
+
     AllocateCommandBuffers();
     RecordCommandBuffers();
 
@@ -56,6 +74,17 @@ CommandManager::CommandManager(
 
 CommandManager::~CommandManager()
 {
+    if (m_TimestampQueryPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(
+            m_LogicalDevice.GetHandle(),
+            m_TimestampQueryPool,
+            nullptr
+        );
+
+        m_TimestampQueryPool = VK_NULL_HANDLE;
+    }
+
     if (m_CommandPool != VK_NULL_HANDLE)
     {
         vkDestroyCommandPool(
@@ -88,6 +117,37 @@ void CommandManager::CreateCommandPool()
     {
         throw std::runtime_error("Failed to create command pool.");
     }
+}
+
+void CommandManager::CreateTimestampQueryPool()
+{
+    VkQueryPoolCreateInfo queryPoolInfo{};
+
+    queryPoolInfo.sType =
+        VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+
+    queryPoolInfo.queryType =
+        VK_QUERY_TYPE_TIMESTAMP;
+
+    queryPoolInfo.queryCount = 4;
+
+    VkResult result = vkCreateQueryPool(
+        m_LogicalDevice.GetHandle(),
+        &queryPoolInfo,
+        nullptr,
+        &m_TimestampQueryPool
+    );
+
+    if (result != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create timestamp query pool."
+        );
+    }
+
+    std::cout
+        << "[GPU Profiler] Timestamp query pool created successfully."
+        << std::endl;
 }
 
 void CommandManager::AllocateCommandBuffers()
@@ -136,8 +196,18 @@ void CommandManager::RecordCommandBuffers()
             );
         }
 
+        // Reset all timestamp queries before using them.
+        vkCmdResetQueryPool(
+            m_CommandBuffers[i],
+            m_TimestampQueryPool,
+            0,
+            4
+        );
+
         // =====================================================
         // Shadow Pass
+        // Query 0 = Shadow start
+        // Query 1 = Shadow end
         // =====================================================
 
         VkClearValue shadowClearValue{};
@@ -170,9 +240,15 @@ void CommandManager::RecordCommandBuffers()
         };
 
         shadowPassInfo.clearValueCount = 1;
-
         shadowPassInfo.pClearValues =
             &shadowClearValue;
+
+        vkCmdWriteTimestamp(
+            m_CommandBuffers[i],
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            m_TimestampQueryPool,
+            0
+        );
 
         vkCmdBeginRenderPass(
             m_CommandBuffers[i],
@@ -241,8 +317,17 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i]
         );
 
+        vkCmdWriteTimestamp(
+            m_CommandBuffers[i],
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            m_TimestampQueryPool,
+            1
+        );
+
         // =====================================================
         // Main Camera Pass
+        // Query 2 = Main pass start
+        // Query 3 = Main pass end
         // =====================================================
 
         VkRenderPassBeginInfo renderPassInfo{};
@@ -289,6 +374,13 @@ void CommandManager::RecordCommandBuffers()
 
         renderPassInfo.pClearValues =
             clearValues.data();
+
+        vkCmdWriteTimestamp(
+            m_CommandBuffers[i],
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            m_TimestampQueryPool,
+            2
+        );
 
         vkCmdBeginRenderPass(
             m_CommandBuffers[i],
@@ -381,6 +473,13 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i]
         );
 
+        vkCmdWriteTimestamp(
+            m_CommandBuffers[i],
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            m_TimestampQueryPool,
+            3
+        );
+
         // =====================================================
         // Finish Command Buffer
         // =====================================================
@@ -398,4 +497,69 @@ void CommandManager::RecordCommandBuffers()
     std::cout
         << "Command buffers recorded successfully."
         << std::endl;
+}
+
+bool CommandManager::GetGpuTimingResult(
+    GpuTimingResult& result
+) const
+{
+    std::array<uint64_t, 4> timestamps{};
+
+    VkResult queryResult = vkGetQueryPoolResults(
+        m_LogicalDevice.GetHandle(),
+        m_TimestampQueryPool,
+        0,
+        static_cast<uint32_t>(timestamps.size()),
+        sizeof(timestamps),
+        timestamps.data(),
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT
+    );
+
+    if (queryResult == VK_NOT_READY)
+    {
+        return false;
+    }
+
+    if (queryResult != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to retrieve GPU timestamp results."
+        );
+    }
+
+    const double nanosecondsPerTick =
+        static_cast<double>(m_TimestampPeriod);
+
+    const double shadowNanoseconds =
+        static_cast<double>(
+            timestamps[1] - timestamps[0]
+            ) * nanosecondsPerTick;
+
+    const double mainNanoseconds =
+        static_cast<double>(
+            timestamps[3] - timestamps[2]
+            ) * nanosecondsPerTick;
+
+    const double totalNanoseconds =
+        static_cast<double>(
+            timestamps[3] - timestamps[0]
+            ) * nanosecondsPerTick;
+
+    constexpr double nanosecondsToMilliseconds =
+        1.0 / 1000000.0;
+
+    result.shadowPassMs =
+        shadowNanoseconds *
+        nanosecondsToMilliseconds;
+
+    result.mainPassMs =
+        mainNanoseconds *
+        nanosecondsToMilliseconds;
+
+    result.totalGpuMs =
+        totalNanoseconds *
+        nanosecondsToMilliseconds;
+
+    return true;
 }

@@ -61,7 +61,8 @@ float LinearizeShadowDepth(float depth)
 float FindBlocker(
     vec2 uv,
     float receiverDepth,
-    float bias
+    float bias,
+    out int blockerCount
 )
 {
     vec2 texelSize =
@@ -71,7 +72,8 @@ float FindBlocker(
     const float searchRadius = 5.0;
 
     float blockerDepthSum = 0.0;
-    int blockerCount = 0;
+
+    blockerCount = 0;
 
     for (int x = -2; x <= 2; ++x)
     {
@@ -237,16 +239,24 @@ float CalculateShadow(
     }
 
     // Mode 3: PCSS
+    int blockerCount = 0;
+
     float avgBlockerLinearDepth =
         FindBlocker(
             projected.xy,
             receiverDepth,
-            bias
+            bias,
+            blockerCount
         );
 
     if (avgBlockerLinearDepth < 0.0)
     {
         return 0.0;
+    }
+
+    if (blockerCount == 25)
+    {
+        return 1.0;
     }
 
     float receiverLinearDepth =
