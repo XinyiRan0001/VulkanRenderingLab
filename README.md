@@ -1,226 +1,119 @@
 # Vulkan Rendering Lab
 
-A real-time rendering project built from scratch with C++ and Vulkan, focused on graphics pipeline construction, real-time shadow techniques, dynamic lighting, and interactive rendering controls.
+A modern real-time renderer built with **C++17** and **Vulkan**, featuring multi-pass rendering, real-time shadow mapping, Percentage-Closer Filtering (PCF), Percentage-Closer Soft Shadows (PCSS), GPU profiling, and benchmark-driven rendering optimization.
 
-This project was developed as an independent rendering study after completing the GAMES202: High-Quality Real-Time Rendering course. The course provided the theoretical foundation for several rendering techniques explored in this project, particularly shadow mapping, Percentage-Closer Filtering (PCF), and Percentage-Closer Soft Shadows (PCSS).
+This project extends concepts studied in the **GAMES202: High-Quality Real-Time Rendering** course by implementing them within a custom Vulkan renderer instead of the original WebGL framework.
 
-Rather than directly reproducing the original WebGL-based coursework, I implemented a custom rendering framework using C++ and Vulkan to explore how these techniques can be integrated into a lower-level graphics API and a modular real-time rendering architecture.
+Rather than reproducing the original coursework, the project focuses on building a modular Vulkan renderer from scratch, integrating multiple shadow algorithms, profiling GPU execution using Vulkan Timestamp Queries, and evaluating rendering performance through benchmark-driven optimisation.
 
-The project implements a custom Vulkan rendering pipeline for loading and rendering textured OBJ models, generating real-time shadow maps, comparing multiple shadow filtering techniques, and controlling dynamic lighting and the camera at runtime.
+---
 
-## Features
+# Features
 
-### Vulkan Rendering Pipeline
+## Rendering
 
-The renderer implements the core Vulkan rendering workflow, including:
+- Vulkan 1.3 Renderer
+- Forward Rendering
+- Multi-pass Rendering
+- OBJ Model Loading
+- Multiple Materials
+- Texture Mapping
+- Dynamic Lighting
+- Orbit Camera
+- Runtime Shadow Mode Switching
 
-- Vulkan instance and device initialization
-- Physical and logical device selection
-- Graphics and presentation queues
-- Swapchain creation
-- Render passes and framebuffers
-- Graphics pipelines
-- Vertex and index buffers
-- Uniform buffers
-- Descriptor sets
-- Texture images and samplers
-- Command buffers
-- Frame synchronization
+---
 
-The rendering architecture separates major Vulkan components into dedicated classes to keep the codebase modular and easier to maintain.
+## Shadow Mapping
 
-### OBJ Model Loading
+Implemented multiple real-time shadow techniques:
 
-The project supports loading OBJ models with multiple materials and submeshes.
+- Hard Shadow
+- Percentage-Closer Filtering (PCF)
+- Percentage-Closer Soft Shadows (PCSS)
+- Shadow Map Debug View
 
-Implemented features include:
+The renderer generates a shadow map from the light's point of view and samples it during the main rendering pass.
 
-- OBJ geometry loading
-- Vertex positions
-- Vertex normals
-- Texture coordinates
-- Material parsing
-- Diffuse textures
-- Multiple submeshes
-- Material-based draw calls
+---
 
-The demo scene contains a textured character model and a floor mesh used for lighting and shadow visualization.
+## Dynamic Lighting
 
-### Real-Time Shadow Mapping
+A movable point light is supported.
 
-A dedicated shadow pass renders scene depth from the active shadow-casting light.
+The light automatically orbits around the scene while continuously updating:
 
-The generated shadow map is sampled during the main camera pass to calculate real-time shadows.
+- Light position
+- Light View Matrix
+- Shadow Projection Matrix
 
-The renderer supports multiple shadow techniques that can be switched at runtime.
+This enables fully dynamic shadows without restarting the renderer.
 
-#### Hard Shadows
-![Hard Shadows](docs/images/hard-shadow.png)
-Standard shadow map depth comparison.
+---
 
-This mode provides sharp shadow boundaries and serves as the baseline implementation.
+## Orbit Camera
 
-#### Percentage-Closer Filtering (PCF)
-![PCF Shadows](docs/images/pcf-shadow.png)
-PCF performs multiple depth comparisons around the current shadow coordinate and averages the results.
+The renderer provides an interactive orbit camera supporting:
 
-This produces smoother shadow edges compared with standard hard shadows.
-
-#### Percentage-Closer Soft Shadows (PCSS)
-![PCSS Soft Shadows](docs/images/pcss-shadow.png)
-PCSS implements variable-width soft shadows based on the distance between the receiver and detected blockers.
-
-The implementation consists of:
-
-1. Blocker search
-2. Average blocker depth estimation
-3. Penumbra size calculation
-4. Variable-radius shadow filtering
-
-Perspective shadow depth is linearized before calculating the penumbra ratio.
-
-This allows shadows to remain relatively sharp near contact areas while becoming softer as the receiver moves farther from the blocker.
-
-### Orbiting Dynamic Light
-https://github.com/user-attachments/assets/9ce20669-7ae5-43dc-8085-d4cebafab918
-https://github.com/user-attachments/assets/e8d11fc0-9672-47c4-b9ee-db14b131cffd
-https://github.com/user-attachments/assets/fd032316-058d-4fc3-b369-3c6c4de9819c
-
-The colored local light automatically orbits around the model along the Y axis. Its position is updated at runtime and used to calculate both direct lighting and the shadow camera transformation.
-
-This allows the illumination and PCSS shadow projection to move together in real time.
-
-A colored local light automatically moves around the model by updating its position around the Y axis.
-
-The light position is calculated using:
-
-```text
-x = cos(angle) * radius
-z = sin(angle) * radius
-```
-
-The resulting position is used for both lighting calculations and the shadow camera view transformation.
-
-This allows the light and its shadow projection to move together around the scene.
-
-### Dynamic Shadow Camera
-
-The shadow camera follows the currently active shadow-casting light.
-
-When the dynamic light is enabled:
-
-```text
-Orbiting Light
-      |
-      v
-Shadow View Matrix
-      |
-      v
-Shadow Pass
-      |
-      v
-Dynamic Shadow Map
-```
-
-When the dynamic light is disabled, the shadow camera switches to the fixed front light.
-
-The renderer therefore maintains a single shadow pass while supporting both fixed and dynamic shadow behavior.
-
-This design avoids the additional cost and complexity of rendering omnidirectional point-light shadows with a depth cubemap.
-
-### Interactive Light Controls
-
-The dynamic light can be controlled at runtime.
-
-Supported features include:
-
-- Enable or disable the dynamic light
-- Pause and resume automatic light movement
-- Switch between automatic orbit and manual control
-- Move the light manually along the X, Y, and Z axes
-
-The shadow projection updates together with the active shadow-casting light.
-
-### Orbit Camera
-
-The camera can be controlled interactively.
-
-Features include:
-
-- Mouse orbit
-- Camera zoom
+- Mouse rotation
+- Zoom
 - Camera reset
-- Configurable yaw
-- Configurable pitch
-- Configurable camera distance
+- Adjustable distance
+- Adjustable pitch
+- Adjustable yaw
 
-The camera always looks toward the model while moving around the target position.
+---
 
-### Shadow Map Debug View
+## Shadow Map Debug
 
-The renderer includes a shadow map visualization mode.
+A dedicated debug mode visualises the generated shadow map directly on screen.
 
-The depth texture generated during the shadow pass can be displayed directly on screen.
-
-This mode is useful for debugging:
+Useful for inspecting:
 
 - Shadow camera coverage
-- Depth rendering
-- Light projection
-- Shadow map artifacts
+- Depth precision
+- Shadow bias
+- Projection artifacts
 
-### Runtime Shadow Switching
+---
 
-Shadow techniques can be switched while the application is running.
+# Runtime Controls
 
-```text
-1 - Hard Shadow
-2 - PCF
-3 - PCSS
-4 - Shadow Map Debug View
-```
+| Key | Function |
+|-----|----------|
+| **1** | Hard Shadow |
+| **2** | Percentage-Closer Filtering (PCF) |
+| **3** | Percentage-Closer Soft Shadows (PCSS) |
+| **4** | Shadow Map Debug |
+| **P** | Toggle Dynamic Lighting |
+| **Space** | Pause / Resume Light Animation |
+| **M** | Toggle Orbit / Manual Light Mode |
+| **J / L** | Move Light (X Axis) |
+| **I / K** | Move Light (Z Axis) |
+| **U / O** | Move Light (Y Axis) |
+| **Left Mouse** | Rotate Camera |
+| **Mouse Wheel** | Zoom Camera |
+| **R** | Reset Camera |
+| **B** | Run 5-second GPU Benchmark |
+| **Esc** | Exit |
 
-This makes it possible to directly compare the visual differences between each shadow technique.
+---
 
-### Runtime Performance Display
+# Project Highlights
 
-The application window displays real-time performance information.
+- Modular Vulkan renderer architecture
+- Multi-pass rendering pipeline
+- Runtime shadow algorithm switching
+- GPU profiling using Vulkan Timestamp Queries
+- Benchmark-driven rendering optimisation
+- GAMES202-inspired rendering research
 
-Example:
+# Rendering Pipeline
 
-```text
-Vulkan Rendering Lab | PCSS | Orbit Light | 286 FPS | 3.47 ms
-```
+The renderer uses two primary rendering passes:
 
-Displayed information includes:
-
-- Current shadow technique
-- Current light control mode
-- Frames per second
-- Frame time
-
-## Controls
-
-| Input | Action |
-|---|---|
-| `1` | Hard Shadow |
-| `2` | PCF |
-| `3` | PCSS |
-| `4` | Shadow Map Debug View |
-| `P` | Enable / Disable Dynamic Light |
-| `Space` | Pause / Resume Light Animation |
-| `M` | Switch Between Orbit and Manual Light Control |
-| `J / L` | Move Manual Light Along X Axis |
-| `I / K` | Move Manual Light Along Z Axis |
-| `U / O` | Move Manual Light Along Y Axis |
-| `Left Mouse Drag` | Orbit Camera |
-| `Mouse Wheel` | Camera Zoom |
-| `R` | Reset Camera |
-| `Esc` | Exit |
-
-## Rendering Pipeline
-
-The renderer uses two main rendering passes.
+1. Shadow Pass
+2. Main Camera Pass
 
 ```text
 Scene Geometry
@@ -248,217 +141,421 @@ Material Texture        Shadow Map
            Final Image
 ```
 
-### Shadow Pass
+## Shadow Pass
 
-The shadow pass:
+The shadow pass renders scene geometry from the active shadow-casting light.
 
-1. Renders scene geometry from the active light position
-2. Writes depth values into the shadow depth image
-3. Uses the light view-projection matrix stored in the uniform buffer
+It performs the following operations:
 
-### Main Camera Pass
+1. Uses the light view-projection matrix
+2. Renders all scene submeshes
+3. Writes depth values into a 2048 กั 2048 shadow depth image
+4. Makes the resulting depth image available to the main camera pass
 
-The main camera pass:
+The pass uses a dedicated:
 
-1. Renders the scene from the camera
-2. Samples material textures
-3. Calculates fixed and dynamic lighting
-4. Samples the shadow map
-5. Applies Hard Shadow, PCF, or PCSS filtering
-6. Produces the final image
+- Shadow Render Pass
+- Shadow Framebuffer
+- Shadow Graphics Pipeline
+- Depth Image
+- Vertex Shader
+- Descriptor Set
 
-## Project Structure
+Only depth information is required, so the shadow pass does not produce a colour attachment.
 
-```text
-VulkanRenderingLab/
-|
-+-- assets/
-|   |
-|   +-- models/
-|       |
-|       +-- mary/
-|       |
-|       +-- floor/
-|
-+-- shaders/
-|   |
-|   +-- triangle.vert
-|   +-- triangle.frag
-|   +-- shadow.vert
-|   +-- shadow.frag
-|
-+-- src/
-|   |
-|   +-- Core/
-|   |   |
-|   |   +-- VulkanContext
-|   |   +-- Window
-|   |
-|   +-- Renderer/
-|   |   |
-|   |   +-- Renderer
-|   |   +-- GraphicsPipeline
-|   |   +-- RenderPass
-|   |   +-- Framebuffer
-|   |   +-- CommandManager
-|   |   +-- DescriptorManager
-|   |
-|   +-- Shadow/
-|   |   |
-|   |   +-- ShadowPipeline
-|   |   +-- ShadowRenderPass
-|   |   +-- ShadowFramebuffer
-|   |
-|   +-- Resources/
-|   |
-|   +-- main.cpp
-|
-+-- CMakeLists.txt
-|
-+-- README.md
-```
+## Main Camera Pass
 
-> The exact directory structure may vary as the renderer continues to be organized and refactored.
+The main pass renders the scene from the active camera.
 
-## Technical Highlights
+It performs the following operations:
 
-### Single Dynamic Shadow Pass
+1. Samples material textures
+2. Calculates direct lighting
+3. Transforms world positions into shadow-map coordinates
+4. Samples the shadow depth image
+5. Applies the selected shadow algorithm
+6. Writes the final image to the swapchain framebuffer
 
-The renderer uses one shadow map and dynamically changes the shadow camera based on the active shadow-casting light.
+The active shadow mode is passed to the fragment shader through the shared uniform buffer.
 
-This keeps the rendering architecture relatively lightweight while still allowing dynamic shadows.
+---
 
-### Shared Uniform Buffer
+# Shadow Algorithms
 
-The shadow pass and main camera pass share dynamic rendering data through a uniform buffer.
+## Hard Shadow
 
-The buffer stores:
-
-- Model matrix
-- Camera view matrix
-- Camera projection matrix
-- Light view-projection matrix
-- Shadow settings
-- Dynamic light position
-- Dynamic light color and intensity
-
-Updating the uniform buffer allows the dynamic light and shadow transformation to change without rebuilding the graphics pipeline.
-
-### Material-Based Submesh Rendering
-
-Loaded OBJ models are divided into submeshes based on material assignments.
-
-Each submesh stores:
-
-- Material index
-- First index
-- Index count
-
-This allows textured and non-textured parts of the model to be rendered correctly.
-
-### Perspective Shadow Mapping
-
-The dynamic local light uses a perspective projection for shadow rendering.
-
-Unlike directional-light shadow mapping with orthographic projection, perspective shadow depth is non-linear.
-
-The PCSS implementation therefore linearizes shadow depth before estimating blocker distance and penumbra size.
-
-## Performance
-
-The project was tested using a Release build.
-
-Observed performance in the current demo scene:
+Hard Shadow performs a single comparison between the receiver depth and the stored shadow-map depth.
 
 ```text
-Frame Rate: approximately 284 - 288 FPS
-Frame Time: approximately 3.46 - 3.48 ms
+Receiver Depth
+      |
+      v
+Shadow Depth Comparison
+      |
+      +---- Visible
+      |
+      +---- Shadowed
 ```
 
-The current scene is intentionally lightweight and is primarily designed to demonstrate rendering architecture, dynamic lighting, and shadow algorithms rather than serve as a large-scale performance benchmark.
+This technique is computationally inexpensive but produces sharp, aliased shadow boundaries.
 
-## Technologies
+It is used as the baseline for visual and performance comparisons.
 
-- C++17
-- Vulkan
-- GLSL
-- GLFW
-- GLM
-- CMake
-- TinyObjLoader
-- stb_image
+## Percentage-Closer Filtering
 
-## From Coursework to Independent Implementation
+Percentage-Closer Filtering performs multiple depth comparisons in a neighbourhood around the shadow coordinate.
 
-One of the main goals of this project was to move beyond implementing rendering algorithms inside an existing educational framework.
+The visibility results are averaged to produce a smoother shadow boundary.
 
-The original GAMES202 coursework provided implementations and experiments primarily within course-specific WebGL and C++ frameworks. For this project, I independently built the rendering infrastructure required to integrate similar concepts into Vulkan.
-
-This required solving additional engineering problems that were separate from the rendering algorithms themselves:
-
-- Creating and managing Vulkan render passes
-- Building graphics and shadow pipelines
-- Managing GPU buffers and descriptor resources
-- Recording multi-pass command buffers
-- Implementing OBJ model and material loading
-- Supporting multiple submeshes
-- Creating and sampling shadow depth images
-- Sharing dynamic light transformations through uniform buffers
-- Designing interactive runtime controls
-- Debugging Vulkan resource, shader, and pipeline integration issues
-
-The resulting project combines the rendering theory studied through GAMES202 with practical low-level graphics programming and renderer architecture development.
-
-## Future Improvements
-
-Possible future extensions include:
-
-- Omnidirectional point-light shadows using depth cubemaps
-- Multiple shadow-casting lights
-- Physically Based Rendering
-- Normal mapping
-- Additional model formats
-- Improved GPU profiling
-- Cascaded Shadow Maps
-- Screen-space rendering effects
-- Improved resource management
-- More advanced synchronization and frame resource management
-
-## Build
-
-### Requirements
-
-- Vulkan SDK
-- CMake
-- C++17 compatible compiler
-- GLFW
-- GLM
-
-### Build Instructions
-
-Clone the repository:
-
-```bash
-git clone <repository-url>
-cd VulkanRenderingLab
+```text
+Neighbouring Shadow Samples
+      |
+      v
+Multiple Depth Comparisons
+      |
+      v
+Average Visibility
+      |
+      v
+Filtered Shadow
 ```
 
-Generate the project:
+The current implementation uses a fixed sampling kernel.
 
-```bash
-cmake -S . -B build
+Compared with Hard Shadow, PCF reduces visible aliasing at the cost of additional shadow-map texture samples.
+
+## Percentage-Closer Soft Shadows
+
+Percentage-Closer Soft Shadows approximates contact-hardening shadows.
+
+The algorithm consists of two main stages:
+
+### 1. Blocker Search
+
+The shader searches a neighbourhood around the receiver to find shadow-map samples that are closer to the light than the receiver.
+
+The average blocker depth is then calculated.
+
+### 2. Variable-Radius Filtering
+
+The distance between the blocker and receiver is used to estimate the penumbra width.
+
+```text
+Blocker Search
+      |
+      v
+Average Blocker Depth
+      |
+      v
+Receiver-to-Blocker Distance
+      |
+      v
+Penumbra Estimation
+      |
+      v
+Variable-Radius PCF
 ```
 
-Build the Release configuration:
+This produces shadows that remain relatively sharp near contact areas and become softer as the receiver moves farther away from the blocker.
 
-```bash
-cmake --build build --config Release
+Because the shadow map is generated using a perspective projection, stored depth values are linearised before blocker-distance and penumbra calculations.
+
+---
+
+# GPU Profiling
+
+The renderer includes a lightweight GPU profiling system implemented with Vulkan Timestamp Queries.
+
+Timestamp queries are recorded directly into each command buffer around the two rendering passes.
+
+```text
+Timestamp 0
+      |
+      v
+Shadow Pass
+      |
+      v
+Timestamp 1
+
+Timestamp 2
+      |
+      v
+Main Camera Pass
+      |
+      v
+Timestamp 3
 ```
 
-Run the application on Windows:
+The profiler calculates:
 
-```bash
-.\build\Release\VulkanRenderingLab.exe
+- Shadow Pass GPU time
+- Main Camera Pass GPU time
+- Total measured GPU time
+- Continuously averaged GPU timings
+- Sample count for each reporting interval
+
+GPU timestamp ticks are converted into nanoseconds using the physical device's `timestampPeriod` value and then converted into milliseconds.
+
+## Timestamp Query Sequence
+
+Each recorded command buffer performs the following operations:
+
+```text
+Reset Timestamp Query Pool
+      |
+      v
+Write Shadow Start Timestamp
+      |
+      v
+Execute Shadow Pass
+      |
+      v
+Write Shadow End Timestamp
+      |
+      v
+Write Main Pass Start Timestamp
+      |
+      v
+Execute Main Camera Pass
+      |
+      v
+Write Main Pass End Timestamp
 ```
 
-Rendering and graphics programming portfolio project focused on Vulkan, real-time lighting, and shadow algorithms.
+Query results are read only after the associated in-flight fence has completed.
+
+This ensures that the GPU has finished executing the command buffer before timing data is accessed.
+
+## Runtime Timing Output
+
+GPU timings are accumulated and reported approximately every 0.5 seconds.
+
+Example:
+
+```text
+[GPU Timing Average] Shadow: 0.159 ms | Main: 0.187 ms | Total: 0.348 ms | Samples: 145
+```
+
+Averaging multiple samples reduces the effect of individual-frame timing fluctuations.
+
+---
+
+# Automated GPU Benchmark
+
+Pressing `B` starts a five-second benchmark for the currently selected shadow mode.
+
+During the benchmark, the renderer:
+
+1. Records the active shadow mode
+2. Resets benchmark accumulators
+3. Collects GPU timings continuously
+4. Calculates average pass times
+5. Reports the final result with the total sample count
+
+Example output:
+
+```text
+========================================
+[GPU Benchmark Result]
+Mode:        PCSS
+Shadow Pass: 0.164 ms
+Main Pass:   0.231 ms
+Total GPU:   0.396 ms
+Samples:     1392
+========================================
+```
+
+The benchmark mode supports:
+
+- Hard Shadow
+- PCF
+- PCSS
+- Shadow Map Debug View
+
+The selected mode is stored when the benchmark begins, preventing the final result from being incorrectly labelled if runtime controls are used.
+
+---
+
+# GPU Performance Benchmark
+
+GPU execution time was measured using Vulkan Timestamp Queries.
+
+Each shadow mode was benchmarked continuously for five seconds.
+
+| Shadow Mode | Shadow Pass | Main Pass | Total GPU |
+|---|---:|---:|---:|
+| Hard Shadow | 0.160 ms | 0.060 ms | 0.221 ms |
+| PCF | 0.184 ms | 0.120 ms | 0.306 ms |
+| PCSS (Optimized) | 0.164 ms | 0.231 ms | 0.396 ms |
+
+> Results were captured in the current demo scene and should be interpreted as a comparison between algorithms rather than a universal hardware benchmark.
+
+## Performance Analysis
+
+The Shadow Pass performs approximately the same work for every shadow mode because all three modes use the same generated shadow map.
+
+The most meaningful comparison is therefore the Main Pass, where the filtering algorithms are executed.
+
+| Shadow Mode | Main Pass | Relative Cost |
+|---|---:|---:|
+| Hard Shadow | 0.060 ms | 1.00กั |
+| PCF | 0.120 ms | 2.00กั |
+| PCSS (Optimized) | 0.231 ms | 3.85กั |
+
+PCF approximately doubled the measured Main Pass time compared with Hard Shadow.
+
+PCSS remained the most expensive mode because it performs both:
+
+- Blocker-search samples
+- Variable-radius filtering samples
+
+The benchmark demonstrates the visual-quality and GPU-cost trade-off between the implemented shadow algorithms.
+
+## Measurement Notes
+
+Benchmark values may vary depending on:
+
+- GPU clock state
+- Background applications
+- Window size
+- Build configuration
+- Camera position
+- Light position
+- Visible shadow coverage
+- Driver behaviour
+
+For consistent comparisons, the same scene, camera position, lighting configuration, window size, and build configuration should be used.
+
+---
+
+# PCSS Performance Optimisation
+
+GPU profiling identified the PCSS Main Pass as the primary shadow-related bottleneck.
+
+The baseline PCSS implementation could perform:
+
+- 25 blocker-search samples
+- 49 variable-radius filtering samples
+- Up to 74 shadow-map texture samples per affected fragment
+
+To reduce unnecessary filtering work, an adaptive early-exit strategy was implemented.
+
+## Early-Exit Conditions
+
+### Fully Lit Fragments
+
+When the blocker search finds no blockers, the fragment is considered fully visible.
+
+The shader returns immediately without running the variable-radius filtering stage.
+
+```text
+No Blockers Found
+      |
+      v
+Fully Lit
+      |
+      v
+Skip Penumbra Filtering
+```
+
+### Fully Shadowed Fragments
+
+When every blocker-search sample is classified as a blocker, the fragment is considered to be inside a fully shadowed region.
+
+The shader returns a fully shadowed result without running the additional filtering stage.
+
+```text
+All Search Samples Are Blockers
+      |
+      v
+Fully Shadowed
+      |
+      v
+Skip Penumbra Filtering
+```
+
+### Penumbra Fragments
+
+Only fragments located near a potential shadow boundary continue to the expensive variable-radius filtering stage.
+
+```text
+Mixed Blocker Results
+      |
+      v
+Potential Penumbra
+      |
+      v
+Calculate Penumbra Width
+      |
+      v
+Run Variable-Radius Filtering
+```
+
+## Optimisation Result
+
+The initial PCSS benchmark measured approximately:
+
+```text
+Main Pass: 0.248 ms
+```
+
+After introducing adaptive early exits, the measured PCSS Main Pass time decreased to approximately:
+
+```text
+Main Pass: 0.231 ms
+```
+
+This represents an initial measured reduction of approximately 7% in PCSS Main Pass GPU time.
+
+The optimisation preserves the full filtering path for penumbra regions while avoiding redundant samples in clearly lit or deeply shadowed areas.
+
+## Optimisation Workflow
+
+The performance work followed this process:
+
+```text
+Implement PCSS
+      |
+      v
+Add Vulkan Timestamp Queries
+      |
+      v
+Profile Shadow and Main Passes
+      |
+      v
+Identify PCSS Main Pass Bottleneck
+      |
+      v
+Analyse Shadow-Map Sample Count
+      |
+      v
+Implement Adaptive Early Exit
+      |
+      v
+Re-run GPU Benchmark
+      |
+      v
+Compare Before and After Results
+```
+
+This workflow was designed to reflect a profiling-driven graphics programming process rather than applying unmeasured changes.
+
+---
+
+# Visual Quality and Performance Trade-Off
+
+Each implemented algorithm serves a different rendering goal.
+
+| Technique | Visual Result | GPU Cost | Use Case |
+|---|---|---:|---|
+| Hard Shadow | Sharp edges | Lowest | Baseline or highly constrained rendering |
+| PCF | Uniformly softened edges | Moderate | General-purpose filtered shadows |
+| PCSS | Contact-hardening soft shadows | Highest | Higher-quality dynamic shadows |
+
+Hard Shadow offers the best performance but the lowest visual quality.
+
+PCF provides a practical balance between quality and cost.
+
+PCSS provides the most realistic result of the three techniques but requires substantially more shadow-map sampling.
+
+The runtime mode-switching and benchmark tools make these trade-offs directly observable within the application.
