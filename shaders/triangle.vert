@@ -16,6 +16,8 @@ layout(binding = 0) uniform UniformBufferObject
     ivec4 shadowSettings;
 
     PointLight pointLight;
+
+    vec4 cameraPosition;
 } ubo;
 
 layout(location = 0) in vec3 inPosition;

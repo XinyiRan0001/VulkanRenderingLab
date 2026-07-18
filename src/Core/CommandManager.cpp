@@ -435,19 +435,53 @@ void CommandManager::RecordCommandBuffers()
 
         for (const SubMesh& subMesh : m_SubMeshes)
         {
-            int useTexture = 0;
+            MaterialPushConstants materialPushConstants{};
 
             if (subMesh.materialId >= 0 &&
-                static_cast<size_t>(
-                    subMesh.materialId
-                    ) < m_Materials.size())
+                static_cast<size_t>(subMesh.materialId) < m_Materials.size())
             {
-                useTexture =
-                    m_Materials[
-                        subMesh.materialId
-                    ].hasDiffuseTexture
-                    ? 1
-                            : 0;
+                const MaterialData& material =
+                    m_Materials[subMesh.materialId];
+
+                materialPushConstants.flags.x =
+                    material.hasDiffuseTexture ? 1 : 0;
+
+                materialPushConstants.baseColor =
+                    glm::vec4(
+                        material.diffuseColor[0],
+                        material.diffuseColor[1],
+                        material.diffuseColor[2],
+                        1.0f
+                    );
+
+                materialPushConstants.properties =
+                    glm::vec4(
+                        material.metallic,
+                        material.roughness,
+                        material.ambientOcclusion,
+                        0.0f
+                    );
+            }
+            else
+            {
+                // Safe fallback material.
+                materialPushConstants.flags.x = 0;
+
+                materialPushConstants.baseColor =
+                    glm::vec4(
+                        1.0f,
+                        1.0f,
+                        1.0f,
+                        1.0f
+                    );
+
+                materialPushConstants.properties =
+                    glm::vec4(
+                        0.0f,  // Metallic
+                        0.5f,  // Roughness
+                        1.0f,  // AO
+                        0.0f
+                    );
             }
 
             vkCmdPushConstants(
@@ -455,8 +489,8 @@ void CommandManager::RecordCommandBuffers()
                 m_GraphicsPipeline.GetLayout(),
                 VK_SHADER_STAGE_FRAGMENT_BIT,
                 0,
-                sizeof(int),
-                &useTexture
+                sizeof(MaterialPushConstants),
+                &materialPushConstants
             );
 
             vkCmdDrawIndexed(

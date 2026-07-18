@@ -1,5 +1,6 @@
 #include "GraphicsPipeline.h"
 #include "ShaderUtils.h"
+#include "MeshData.h"
 
 #include <stdexcept>
 #include <iostream>
@@ -230,7 +231,8 @@ void GraphicsPipeline::CreateGraphicsPipeline()
     pushConstantRange.stageFlags =
         VK_SHADER_STAGE_FRAGMENT_BIT;
     pushConstantRange.offset = 0;
-    pushConstantRange.size = sizeof(int);
+    pushConstantRange.size =
+        sizeof(MaterialPushConstants);
 
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType =

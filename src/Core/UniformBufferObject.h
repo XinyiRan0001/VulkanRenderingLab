@@ -18,4 +18,5 @@ struct UniformBufferObject
     alignas(16) glm::ivec4 shadowSettings{ 3, 0, 0, 0 };
 
     PointLight pointLight;
+    glm::vec4 cameraPosition;
 };

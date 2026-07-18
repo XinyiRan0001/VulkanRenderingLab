@@ -22,6 +22,7 @@
 #include "ShadowFramebuffer.h"
 #include "ShadowPipeline.h"
 
+#include <limits>
 #include <array>
 #include <iostream>
 #include <stdexcept>
@@ -186,6 +187,14 @@ VulkanContext::VulkanContext(Window& window)
         "assets/models/mary/Marry.obj"
     );
 
+    // Character material defaults.
+    for (MaterialData& material : maryMesh.materials)
+    {
+        material.metallic = 0.0f;
+        material.roughness = 0.65f;
+        material.ambientOcclusion = 1.0f;
+    }
+
     // =========================================================
     // Load Floor model
     // =========================================================
@@ -193,6 +202,135 @@ VulkanContext::VulkanContext(Window& window)
     MeshData floorMesh = OBJLoader::Load(
         "assets/models/floor/floor.obj"
     );
+
+    // =========================================================
+// Load Material Lab sphere
+// =========================================================
+
+    MeshData materialBallMesh = OBJLoader::Load(
+        "assets/models/materiallab/TestObj.obj"
+    );
+
+    if (materialBallMesh.vertices.empty())
+    {
+        throw std::runtime_error(
+            "Material Lab sphere contains no vertices."
+        );
+    }
+
+    // =========================================================
+    // Normalize the sphere model
+    //
+    // TestObj.obj may use a different source scale from Marry.
+    // Normalize it into a predictable local-space size before
+    // applying the renderer's shared model matrix.
+    // =========================================================
+
+    glm::vec3 boundsMin(
+        std::numeric_limits<float>::max()
+    );
+
+    glm::vec3 boundsMax(
+        std::numeric_limits<float>::lowest()
+    );
+
+    for (const Vertex& vertex : materialBallMesh.vertices)
+    {
+        const glm::vec3 position(
+            vertex.position[0],
+            vertex.position[1],
+            vertex.position[2]
+        );
+
+        boundsMin = glm::min(
+            boundsMin,
+            position
+        );
+
+        boundsMax = glm::max(
+            boundsMax,
+            position
+        );
+    }
+
+    const glm::vec3 boundsCenter =
+        (boundsMin + boundsMax) * 0.5f;
+
+    const glm::vec3 boundsSize =
+        boundsMax - boundsMin;
+
+    const float largestDimension =
+        std::max(
+            boundsSize.x,
+            std::max(
+                boundsSize.y,
+                boundsSize.z
+            )
+        );
+
+    if (largestDimension <= 0.000001f)
+    {
+        throw std::runtime_error(
+            "Material Lab sphere has invalid bounds."
+        );
+    }
+
+    // The normalized sphere will be approximately two local-space
+    // units across. The shared 0.35 model scale then makes it about
+    // 0.7 world-space units across.
+    const float normalizationScale =
+        2.0f / largestDimension;
+
+    // Position is specified before the shared 0.35 model scale.
+    // This places the test sphere to the left of the character.
+    const glm::vec3 materialBallPosition(
+        -4.0f,
+        1.35f,
+        0.0f
+    );
+
+    for (Vertex& vertex : materialBallMesh.vertices)
+    {
+        glm::vec3 position(
+            vertex.position[0],
+            vertex.position[1],
+            vertex.position[2]
+        );
+
+        position =
+            (position - boundsCenter) *
+            normalizationScale;
+
+        position += materialBallPosition;
+
+        vertex.position[0] = position.x;
+        vertex.position[1] = position.y;
+        vertex.position[2] = position.z;
+    }
+
+    if (materialBallMesh.materials.empty())
+    {
+        MaterialData material{};
+
+        material.diffuseColor[0] = 0.72f;
+        material.diffuseColor[1] = 0.72f;
+        material.diffuseColor[2] = 0.72f;
+
+        material.hasDiffuseTexture = false;
+        material.metallic = 0.0f;
+        material.roughness = 0.18f;
+        material.ambientOcclusion = 1.0f;
+
+        materialBallMesh.materials.push_back(
+            material
+        );
+
+        for (SubMesh& subMesh :
+            materialBallMesh.subMeshes)
+        {
+            subMesh.materialId = 0;
+        }
+    }
 
     // Temporarily bake a transform into the floor vertices.
     // These values can be adjusted after seeing the result.
@@ -211,6 +349,10 @@ VulkanContext::VulkanContext(Window& window)
     for (MaterialData& material : floorMesh.materials)
     {
         material.hasDiffuseTexture = false;
+
+        material.metallic = 0.0f;
+        material.roughness = 0.9f;
+        material.ambientOcclusion = 1.0f;
     }
 
     // =========================================================
@@ -315,6 +457,118 @@ VulkanContext::VulkanContext(Window& window)
         combinedMesh.subMeshes.push_back(
             floorSubMesh
         );
+    }
+    for (int row = 0; row < 2; ++row)
+    {
+        for (int sphere = 0; sphere < 5; ++sphere)
+        {
+            MeshData sphereMesh = materialBallMesh;
+            const float roughnessValues[5] =
+            {
+                0.02f,
+                0.20f,
+                0.45f,
+                0.70f,
+                1.00f
+            };
+
+            for (MaterialData& material : sphereMesh.materials)
+            {
+                material.hasDiffuseTexture = false;
+                material.metallic = row == 0 ? 0.0f : 1.0f;
+                material.roughness = roughnessValues[sphere];
+                material.ambientOcclusion = 1.0f;
+
+            }
+
+            for (MaterialData& material : sphereMesh.materials)
+            {
+                material.hasDiffuseTexture = false;
+
+                material.metallic = 0.0f;
+
+                material.roughness =
+                    roughnessValues[sphere];
+
+                material.ambientOcclusion = 1.0f;
+            }
+
+            const float sphereSpacing = 1.35f;
+
+            for (Vertex& vertex : sphereMesh.vertices)
+            {
+                vertex.position[0] +=
+                    -3.2f + sphere * 1.35f;
+
+                vertex.position[1] +=
+                    0.7f - row * 1.5f;
+
+                vertex.position[2] +=
+                    -1.3f;
+            }
+            // =========================================================
+            // Append Material Lab sphere
+            // =========================================================
+
+            const uint32_t materialBallVertexOffset =
+                static_cast<uint32_t>(
+                    combinedMesh.vertices.size()
+                    );
+
+            const uint32_t materialBallIndexOffset =
+                static_cast<uint32_t>(
+                    combinedMesh.indices.size()
+                    );
+
+            const int materialBallMaterialOffset =
+                static_cast<int>(
+                    combinedMesh.materials.size()
+                    );
+
+            // Append vertices.
+            combinedMesh.vertices.insert(
+                combinedMesh.vertices.end(),
+                sphereMesh.vertices.begin(),
+                sphereMesh.vertices.end()
+            );
+
+            // Append indices and shift them to the sphere's vertex range.
+            for (uint32_t index : sphereMesh.indices)
+            {
+                combinedMesh.indices.push_back(
+                    index +
+                    materialBallVertexOffset
+                );
+            }
+
+            // Append materials.
+            combinedMesh.materials.insert(
+                combinedMesh.materials.end(),
+                sphereMesh.materials.begin(),
+                sphereMesh.materials.end()
+            );
+
+            // Append submeshes and shift index/material offsets.
+            for (const SubMesh& sourceSubMesh :
+                sphereMesh.subMeshes)
+            {
+                SubMesh materialBallSubMesh =
+                    sourceSubMesh;
+
+                materialBallSubMesh.firstIndex +=
+                    materialBallIndexOffset;
+
+                if (materialBallSubMesh.materialId >= 0)
+                {
+                    materialBallSubMesh.materialId +=
+                        materialBallMaterialOffset;
+                }
+
+                combinedMesh.subMeshes.push_back(
+                    materialBallSubMesh
+                );
+            }
+        }
     }
 
     std::cout
@@ -1091,6 +1345,12 @@ void VulkanContext::UpdateUniformBuffer()
         cameraTarget,
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
+
+    ubo.cameraPosition =
+        glm::vec4(
+            cameraPosition,
+            1.0f
+        );
 
     // =========================================================
     // Main camera projection

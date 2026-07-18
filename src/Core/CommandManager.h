@@ -12,6 +12,7 @@
 #include "Buffer.h"
 #include "DescriptorManager.h"
 #include "MeshData.h"
+#include "RenderObject.h"
 #include "ShadowRenderPass.h"
 #include "ShadowFramebuffer.h"
 #include "ShadowPipeline.h"

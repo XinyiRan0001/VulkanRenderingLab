@@ -16,6 +16,8 @@ layout(binding = 0) uniform UniformBufferObject
     ivec4 shadowSettings;
 
     PointLight pointLight;
+
+    vec4 cameraPosition;
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -23,7 +25,11 @@ layout(binding = 2) uniform sampler2D shadowMap;
 
 layout(push_constant) uniform MaterialPushConstant
 {
-    int useTexture;
+    ivec4 flags;
+
+    vec4 baseColor;
+
+    vec4 properties;
 } material;
 
 layout(location = 0) in vec3 fragColor;
@@ -321,6 +327,284 @@ float CalculateShadow(
         sampleCount;
 }
 
+// =============================================================
+// Cook-Torrance GGX BRDF
+// =============================================================
+
+const float PI = 3.14159265359;
+
+
+// GGX / Trowbridge-Reitz normal distribution.
+//
+// Controls the concentration of microfacet normals around the
+// surface normal. Lower roughness produces a sharper highlight.
+float DistributionGGX(
+    vec3 normal,
+    vec3 halfwayDirection,
+    float roughness
+)
+{
+    float alpha =
+        roughness * roughness;
+
+    float alphaSquared =
+        alpha * alpha;
+
+    float normalDotHalfway =
+        max(
+            dot(
+                normal,
+                halfwayDirection
+            ),
+            0.0
+        );
+
+    float normalDotHalfwaySquared =
+        normalDotHalfway *
+        normalDotHalfway;
+
+    float denominator =
+        normalDotHalfwaySquared *
+        (
+            alphaSquared - 1.0
+        ) +
+        1.0;
+
+    denominator =
+        PI *
+        denominator *
+        denominator;
+
+    return
+        alphaSquared /
+        max(
+            denominator,
+            0.000001
+        );
+}
+
+
+// Schlick approximation of the GGX geometry term.
+float GeometrySchlickGGX(
+    float normalDotDirection,
+    float roughness
+)
+{
+    float roughnessPlusOne =
+        roughness + 1.0;
+
+    float k =
+        (
+            roughnessPlusOne *
+            roughnessPlusOne
+        ) /
+        8.0;
+
+    float denominator =
+        normalDotDirection *
+        (
+            1.0 - k
+        ) +
+        k;
+
+    return
+        normalDotDirection /
+        max(
+            denominator,
+            0.000001
+        );
+}
+
+
+// Smith masking-shadowing term for both the view and light
+// directions.
+float GeometrySmith(
+    vec3 normal,
+    vec3 viewDirection,
+    vec3 lightDirection,
+    float roughness
+)
+{
+    float normalDotView =
+        max(
+            dot(
+                normal,
+                viewDirection
+            ),
+            0.0
+        );
+
+    float normalDotLight =
+        max(
+            dot(
+                normal,
+                lightDirection
+            ),
+            0.0
+        );
+
+    float geometryView =
+        GeometrySchlickGGX(
+            normalDotView,
+            roughness
+        );
+
+    float geometryLight =
+        GeometrySchlickGGX(
+            normalDotLight,
+            roughness
+        );
+
+    return
+        geometryView *
+        geometryLight;
+}
+
+
+// Schlick approximation of the Fresnel term.
+vec3 FresnelSchlick(
+    float cosineTheta,
+    vec3 reflectanceAtNormalIncidence
+)
+{
+    return
+        reflectanceAtNormalIncidence +
+        (
+            vec3(1.0) -
+            reflectanceAtNormalIncidence
+        ) *
+        pow(
+            clamp(
+                1.0 - cosineTheta,
+                0.0,
+                1.0
+            ),
+            5.0
+        );
+}
+
+
+// Evaluates the direct Cook-Torrance BRDF for one light.
+vec3 EvaluateCookTorranceLight(
+    vec3 baseColor,
+    vec3 normal,
+    vec3 viewDirection,
+    vec3 lightDirection,
+    vec3 radiance,
+    float metallic,
+    float roughness
+)
+{
+    float normalDotLight =
+        max(
+            dot(
+                normal,
+                lightDirection
+            ),
+            0.0
+        );
+
+    float normalDotView =
+        max(
+            dot(
+                normal,
+                viewDirection
+            ),
+            0.0
+        );
+
+    if (normalDotLight <= 0.0 ||
+        normalDotView <= 0.0)
+    {
+        return vec3(0.0);
+    }
+
+    vec3 halfwayDirection =
+        normalize(
+            viewDirection +
+            lightDirection
+        );
+
+    vec3 dielectricF0 =
+        vec3(0.04);
+
+    vec3 reflectanceAtNormalIncidence =
+        mix(
+            dielectricF0,
+            baseColor,
+            metallic
+        );
+
+    float distribution =
+        DistributionGGX(
+            normal,
+            halfwayDirection,
+            roughness
+        );
+
+    float geometry =
+        GeometrySmith(
+            normal,
+            viewDirection,
+            lightDirection,
+            roughness
+        );
+
+    vec3 fresnel =
+        FresnelSchlick(
+            max(
+                dot(
+                    halfwayDirection,
+                    viewDirection
+                ),
+                0.0
+            ),
+            reflectanceAtNormalIncidence
+        );
+
+    vec3 numerator =
+        distribution *
+        geometry *
+        fresnel;
+
+    float denominator =
+        4.0 *
+        normalDotView *
+        normalDotLight;
+
+    vec3 specular =
+        numerator /
+        max(
+            denominator,
+            0.0001
+        );
+
+    vec3 specularWeight =
+        fresnel;
+
+    vec3 diffuseWeight =
+        (
+            vec3(1.0) -
+            specularWeight
+        ) *
+        (
+            1.0 - metallic
+        );
+
+    vec3 diffuse =
+        diffuseWeight *
+        baseColor /
+        PI;
+
+    return
+        (
+            diffuse +
+            specular
+        ) *
+        radiance *
+        normalDotLight;
+}
+
 
 // =============================================================
 // Main
@@ -380,7 +664,7 @@ void main()
 
     vec3 baseColor;
 
-    if (material.useTexture != 0)
+    if (material.flags.x != 0)
     {
         baseColor =
             texture(
@@ -391,7 +675,7 @@ void main()
     else
     {
         baseColor =
-            fragColor;
+            material.baseColor.rgb;
     }
 
     vec3 normal =
@@ -399,15 +683,41 @@ void main()
             fragNormal
         );
 
+    vec3 viewDirection =
+        normalize(
+            ubo.cameraPosition.xyz -
+            fragWorldPosition
+        );
+
     // ---------------------------------------------------------
-    // Ambient light
+    // Temporary global material parameters
+    //
+    // The character is currently treated as a rough dielectric.
+    // A per-material roughness system will be added later.
     // ---------------------------------------------------------
 
-    const float ambientStrength = 0.22;
+    float metallic =
+        material.properties.x;
+
+    float roughness =
+        material.properties.y;
+
+    float ao =
+        material.properties.z;
+
+    // ---------------------------------------------------------
+    // Ambient approximation
+    //
+    // This is not image-based lighting yet. It only prevents
+    // unlit surfaces from becoming completely black.
+    // ---------------------------------------------------------
+
+    const float ambientStrength = 0.16;
 
     vec3 ambientLighting =
         baseColor *
-        ambientStrength;
+        ambientStrength *
+        ao;
 
     // ---------------------------------------------------------
     // Fixed front white light
@@ -434,15 +744,6 @@ void main()
             toFixedLight
         );
 
-    float fixedDiffuse =
-        max(
-            dot(
-                normal,
-                fixedLightDirection
-            ),
-            0.0
-        );
-
     float fixedAttenuation =
         1.0 /
         (
@@ -455,12 +756,21 @@ void main()
 
     const float fixedLightIntensity = 1.4;
 
-    vec3 fixedLighting =
-        baseColor *
+    vec3 fixedRadiance =
         vec3(1.0) *
-        fixedDiffuse *
-        fixedAttenuation *
-        fixedLightIntensity;
+        fixedLightIntensity *
+        fixedAttenuation;
+
+    vec3 fixedLighting =
+        EvaluateCookTorranceLight(
+            baseColor,
+            normal,
+            viewDirection,
+            fixedLightDirection,
+            fixedRadiance,
+            metallic,
+            roughness
+        );
 
     // ---------------------------------------------------------
     // Orbiting point light
@@ -483,15 +793,6 @@ void main()
             toPointLight
         );
 
-    float pointDiffuse =
-        max(
-            dot(
-                normal,
-                pointLightDirection
-            ),
-            0.0
-        );
-
     float pointAttenuation =
         1.0 /
         (
@@ -506,21 +807,27 @@ void main()
         ubo.pointLight.color.a >
         0.001;
 
-    vec3 pointLighting =
-        baseColor *
+    vec3 pointRadiance =
         ubo.pointLight.color.rgb *
         ubo.pointLight.color.a *
-        pointDiffuse *
         pointAttenuation;
 
+    vec3 pointLighting =
+        EvaluateCookTorranceLight(
+            baseColor,
+            normal,
+            viewDirection,
+            pointLightDirection,
+            pointRadiance,
+            metallic,
+            roughness
+        );
+
     // ---------------------------------------------------------
-    // The current shadow map belongs to one light:
+    // Shadow selection
     //
-    // Point light enabled:
-    //     shadow map follows the orbiting light.
-    //
-    // Point light disabled:
-    //     shadow map uses the fixed front light.
+    // The shadow map follows the point light when it is enabled.
+    // Otherwise it represents the fixed front light.
     // ---------------------------------------------------------
 
     vec3 shadowLightDirection =
@@ -538,12 +845,18 @@ void main()
     if (pointLightEnabled)
     {
         pointLighting *=
-            (1.0 - shadow);
+            (
+                1.0 -
+                shadow
+            );
     }
     else
     {
         fixedLighting *=
-            (1.0 - shadow);
+            (
+                1.0 -
+                shadow
+            );
     }
 
     // ---------------------------------------------------------
