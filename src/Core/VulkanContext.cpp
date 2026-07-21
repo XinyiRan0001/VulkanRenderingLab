@@ -14,6 +14,7 @@
 #include "Image.h"
 #include "UniformBufferObject.h"
 #include "DescriptorManager.h"
+#include "DescriptorSetLayout.h"
 #include "OBJLoader.h"
 #include "MeshData.h"
 #include "TextureData.h"
@@ -21,6 +22,7 @@
 #include "ShadowRenderPass.h"
 #include "ShadowFramebuffer.h"
 #include "ShadowPipeline.h"
+#include "SkyboxPipeline.h"
 
 #include <limits>
 #include <array>
@@ -160,21 +162,44 @@ VulkanContext::VulkanContext(Window& window)
     );
 
     // =========================================================
-    // Main graphics pipeline
-    // =========================================================
+// Shared descriptor set layout
+// =========================================================
 
-    m_GraphicsPipeline = std::make_unique<GraphicsPipeline>(
+m_DescriptorSetLayout =
+    std::make_unique<DescriptorSetLayout>(
+        *m_LogicalDevice
+    );
+
+// =========================================================
+// Main graphics pipeline
+// =========================================================
+
+m_GraphicsPipeline =
+    std::make_unique<GraphicsPipeline>(
         *m_LogicalDevice,
         *m_RenderPass,
-        *m_Swapchain
+        *m_Swapchain,
+        m_DescriptorSetLayout->GetHandle()
     );
 
     m_ShadowPipeline =
-            std::make_unique<ShadowPipeline>(
-                *m_LogicalDevice,
-                *m_ShadowRenderPass,
-                m_GraphicsPipeline->GetDescriptorSetLayout()
-            );
+    std::make_unique<ShadowPipeline>(
+        *m_LogicalDevice,
+        *m_ShadowRenderPass,
+        m_DescriptorSetLayout->GetHandle()
+    );
+
+    // =========================================================
+    // Skybox pipeline
+    // =========================================================
+
+    m_SkyboxPipeline =
+        std::make_unique<SkyboxPipeline>(
+            *m_LogicalDevice,
+            *m_RenderPass,
+            *m_Swapchain,
+            m_DescriptorSetLayout->GetHandle()
+        );
 
         std::cout
         << "[Shadow] Shadow pipeline ready."
@@ -591,6 +616,29 @@ VulkanContext::VulkanContext(Window& window)
         << combinedMesh.materials.size()
         << std::endl;
 
+// =========================================================
+// Test HDR loading
+// =========================================================
+
+    HDRTextureData hdrTextureData =
+        TextureLoader::LoadHDR(
+            "assets/textures/hdr/small_harbor_01_4k.hdr"
+        );
+
+    if (!hdrTextureData.IsValid())
+    {
+        throw std::runtime_error(
+            "Loaded HDR texture is invalid."
+        );
+    }
+
+    m_HDRTextureImage =
+        std::make_unique<TextureImage>(
+            *m_PhysicalDevice,
+            *m_LogicalDevice,
+            hdrTextureData
+        );
+
     // =========================================================
     // Load Marry texture
     // =========================================================
@@ -732,14 +780,15 @@ VulkanContext::VulkanContext(Window& window)
         << std::endl;
 
     m_DescriptorManager =
-        std::make_unique<DescriptorManager>(
-            *m_LogicalDevice,
-            *m_GraphicsPipeline,
-            *m_UniformBuffer,
-            *m_TextureImage,
-            m_ShadowDepthImage->GetView(),
-            m_ShadowSampler
-        );
+    std::make_unique<DescriptorManager>(
+        *m_LogicalDevice,
+        *m_GraphicsPipeline,
+        *m_UniformBuffer,
+        *m_TextureImage,
+        *m_HDRTextureImage,
+        m_ShadowDepthImage->GetView(),
+        m_ShadowSampler
+    );
 
     std::cout
         << "[Context] Descriptor manager ready."
@@ -761,6 +810,7 @@ VulkanContext::VulkanContext(Window& window)
             *m_RenderPass,
             *m_Swapchain,
             *m_GraphicsPipeline,
+            *m_SkyboxPipeline,
             *m_ShadowRenderPass,
             *m_ShadowFramebuffer,
             *m_ShadowPipeline,
@@ -1158,18 +1208,29 @@ VulkanContext::~VulkanContext()
 {
     m_Renderer.reset();
     m_CommandManager.reset();
+    m_DescriptorManager.reset();
+
+    m_ShadowPipeline.reset();
+    m_SkyboxPipeline.reset();
+    m_GraphicsPipeline.reset();
+
+    m_DescriptorSetLayout.reset();
+
     m_TextureImage.reset();
+    m_HDRTextureImage.reset();
+
     m_IndexBuffer.reset();
     m_VertexBuffer.reset();
-    m_GraphicsPipeline.reset();
+
     m_Framebuffer.reset();
     m_DepthImage.reset();
     m_RenderPass.reset();
-    m_Swapchain.reset();
-    m_ShadowPipeline.reset();
+
     m_ShadowFramebuffer.reset();
     m_ShadowRenderPass.reset();
     m_ShadowDepthImage.reset();
+
+    m_Swapchain.reset();
 
     if (m_ShadowSampler != VK_NULL_HANDLE)
     {
@@ -1510,5 +1571,9 @@ void VulkanContext::UpdateUniformBuffer()
 
 void VulkanContext::DrawFrame()
 {
+    std::cout << "[Context] Before DrawFrame" << std::endl;
+
     m_Renderer->DrawFrame();
+
+    std::cout << "[Context] After DrawFrame" << std::endl;
 }

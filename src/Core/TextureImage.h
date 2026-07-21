@@ -16,6 +16,12 @@ public:
         const TextureData& textureData
     );
 
+    TextureImage(
+        const PhysicalDevice& physicalDevice,
+        const LogicalDevice& logicalDevice,
+        const HDRTextureData& textureData
+    );
+
     ~TextureImage();
 
     TextureImage(const TextureImage&) = delete;
@@ -49,7 +55,7 @@ private:
     VkDeviceMemory m_ImageMemory = VK_NULL_HANDLE;
     VkImageView m_ImageView = VK_NULL_HANDLE;
     VkSampler m_Sampler = VK_NULL_HANDLE;
-    VkFormat m_Format = VK_FORMAT_R8G8B8A8_SRGB;
+    VkFormat m_Format = VK_FORMAT_UNDEFINED;
 
 private:
     void CreateImage(
@@ -62,6 +68,10 @@ private:
     void CreateImageView();
     void CreateSampler();
     void UploadPixels(const TextureData& textureData);
+
+    void UploadPixels(
+        const HDRTextureData& textureData
+    );
 
     void TransitionImageLayout(
         VkImageLayout oldLayout,

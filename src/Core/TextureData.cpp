@@ -57,3 +57,66 @@ TextureData TextureLoader::LoadRGBA(const std::string& filepath)
 
     return textureData;
 }
+
+HDRTextureData TextureLoader::LoadHDR(
+    const std::string& filepath
+)
+{
+    int width = 0;
+    int height = 0;
+    int sourceChannels = 0;
+
+    stbi_set_flip_vertically_on_load(true);
+
+    float* loadedPixels = stbi_loadf(
+        filepath.c_str(),
+        &width,
+        &height,
+        &sourceChannels,
+        STBI_rgb
+    );
+
+    // Restore the default immediately so later LDR textures are unaffected.
+    stbi_set_flip_vertically_on_load(false);
+
+    if (loadedPixels == nullptr)
+    {
+        const char* reason = stbi_failure_reason();
+
+        throw std::runtime_error(
+            "Failed to load HDR texture: " +
+            filepath +
+            "\nReason: " +
+            (reason != nullptr
+                ? reason
+                : "Unknown stb_image error")
+        );
+    }
+
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height) *
+        3;
+
+    HDRTextureData textureData{};
+    textureData.width = width;
+    textureData.height = height;
+    textureData.channels = 3;
+
+    textureData.pixels.assign(
+        loadedPixels,
+        loadedPixels + pixelCount
+    );
+
+    stbi_image_free(loadedPixels);
+
+    std::cout
+        << "[HDR] Loaded " << filepath << '\n'
+        << "Width: " << textureData.width << '\n'
+        << "Height: " << textureData.height << '\n'
+        << "Source channels: " << sourceChannels << '\n'
+        << "Loaded channels: " << textureData.channels
+        << std::endl;
+
+    return textureData;
+}

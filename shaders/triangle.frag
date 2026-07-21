@@ -22,6 +22,7 @@ layout(binding = 0) uniform UniformBufferObject
 
 layout(binding = 1) uniform sampler2D texSampler;
 layout(binding = 2) uniform sampler2D shadowMap;
+layout(binding = 3) uniform sampler2D hdrEnvironment;
 
 layout(push_constant) uniform MaterialPushConstant
 {
@@ -605,6 +606,37 @@ vec3 EvaluateCookTorranceLight(
         normalDotLight;
 }
 
+vec2 DirectionToEquirectangularUV(vec3 direction)
+{
+    direction = normalize(direction);
+
+    float longitude =
+        atan(
+            direction.z,
+            direction.x
+        );
+
+    float latitude =
+        asin(
+            clamp(
+                direction.y,
+                -1.0,
+                1.0
+            )
+        );
+
+    vec2 uv;
+
+    uv.x =
+        longitude / (2.0 * PI) +
+        0.5;
+
+    uv.y =
+        0.5 +
+        latitude / PI;
+
+    return uv;
+}
 
 // =============================================================
 // Main
@@ -706,18 +738,90 @@ void main()
         material.properties.z;
 
     // ---------------------------------------------------------
-    // Ambient approximation
+    // Ambient lighting
     //
-    // This is not image-based lighting yet. It only prevents
-    // unlit surfaces from becoming completely black.
+    // Non-metal materials such as the character receive only
+    // weak indirect environment illumination.
+    //
+    // Metallic materials do not use diffuse ambient lighting.
+    // Their HDR reflection will be implemented separately.
     // ---------------------------------------------------------
 
-    const float ambientStrength = 0.16;
+    const float ambientStrength =
+        0.08;
 
     vec3 ambientLighting =
         baseColor *
         ambientStrength *
-        ao;
+        ao *
+        (1.0 - metallic);
+
+    // ---------------------------------------------------------
+    // Temporary metallic HDR reflection
+    //
+    // Only metallic materials receive this environment
+    // reflection. The character has metallic = 0.0, so it is
+    // not affected by this term.
+    // ---------------------------------------------------------
+
+    vec3 reflectionDirection =
+        reflect(
+            -viewDirection,
+            normal
+        );
+
+    vec2 reflectionUV =
+        DirectionToEquirectangularUV(
+            reflectionDirection
+        );
+
+    vec3 reflectedEnvironment =
+        texture(
+            hdrEnvironment,
+            reflectionUV
+        ).rgb;
+
+    // Metals use their base colour as the normal-incidence
+    // reflection colour.
+    vec3 metallicF0 =
+        baseColor;
+
+    float NdotV =
+        max(
+            dot(
+                normal,
+                viewDirection
+            ),
+            0.0
+        );
+
+    vec3 environmentFresnel =
+        metallicF0 +
+        (vec3(1.0) - metallicF0) *
+        pow(
+            1.0 - NdotV,
+            5.0
+        );
+
+    // This does not blur the reflection yet. It only reduces
+    // its strength for rough materials until a prefiltered
+    // environment map is implemented.
+    float roughnessAttenuation =
+        mix(
+            1.0,
+            0.20,
+            roughness
+        );
+
+    const float reflectionStrength =
+        0.35;
+
+    vec3 specularEnvironment =
+        reflectedEnvironment *
+        environmentFresnel *
+        metallic *
+        roughnessAttenuation *
+        reflectionStrength;
 
     // ---------------------------------------------------------
     // Fixed front white light
@@ -865,6 +969,7 @@ void main()
 
     vec3 finalLighting =
         ambientLighting +
+        specularEnvironment +
         fixedLighting +
         pointLighting;
 

@@ -78,6 +78,11 @@ add_executable(VulkanRenderingLab
     src/Core/ShadowFramebuffer.cpp
     src/Core/ShadowPipeline.h
     src/Core/ShadowPipeline.cpp
+
+    src/Core/DescriptorSetLayout.cpp
+    src/Core/DescriptorSetLayout.h
+    src/Core/SkyboxPipeline.cpp
+    src/Core/SkyboxPipeline.h
 )
 
 target_link_libraries(VulkanRenderingLab

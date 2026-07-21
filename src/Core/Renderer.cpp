@@ -59,15 +59,30 @@ void Renderer::CreateSyncObjects()
 
 void Renderer::DrawFrame()
 {
+    std::cout << "[DrawFrame] Begin" << std::endl;
+
     VkDevice device = m_LogicalDevice.GetHandle();
 
-    vkWaitForFences(
+    VkResult waitResult = vkWaitForFences(
         device,
         1,
         &m_InFlightFence,
         VK_TRUE,
         UINT64_MAX
     );
+
+    std::cout
+        << "[DrawFrame] Fence wait result: "
+        << static_cast<int>(waitResult)
+        << std::endl;
+
+    if (waitResult != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "vkWaitForFences failed: " +
+            std::to_string(static_cast<int>(waitResult))
+        );
+    }
 
     if (m_HasSubmittedFrame)
     {
@@ -239,12 +254,6 @@ void Renderer::DrawFrame()
         }
     }
 
-    vkResetFences(
-        device,
-        1,
-        &m_InFlightFence
-    );
-
     uint32_t imageIndex = 0;
 
     VkResult acquireResult = vkAcquireNextImageKHR(
@@ -254,6 +263,33 @@ void Renderer::DrawFrame()
         m_ImageAvailableSemaphore,
         VK_NULL_HANDLE,
         &imageIndex
+    );
+
+    std::cout
+    << "[DrawFrame] Acquire result: "
+    << static_cast<int>(acquireResult)
+    << ", image index: "
+    << imageIndex
+    << std::endl;
+
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        return;
+    }
+
+    if (acquireResult != VK_SUCCESS &&
+        acquireResult != VK_SUBOPTIMAL_KHR)
+    {
+        throw std::runtime_error(
+            "Failed to acquire swapchain image. VkResult = " +
+            std::to_string(static_cast<int>(acquireResult))
+        );
+    }
+
+    vkResetFences(
+        device,
+        1,
+        &m_InFlightFence
     );
 
     if (acquireResult != VK_SUCCESS)
@@ -302,15 +338,25 @@ void Renderer::DrawFrame()
     submitInfo.pSignalSemaphores =
         signalSemaphores;
 
-    if (vkQueueSubmit(
+    std::cout << "[DrawFrame] Before queue submit" << std::endl;
+
+    VkResult submitResult = vkQueueSubmit(
         m_LogicalDevice.GetGraphicsQueue(),
         1,
         &submitInfo,
         m_InFlightFence
-    ) != VK_SUCCESS)
+    );
+
+    std::cout
+    << "[DrawFrame] Submit result: "
+    << static_cast<int>(submitResult)
+    << std::endl;
+
+    if (submitResult != VK_SUCCESS)
     {
         throw std::runtime_error(
-            "Failed to submit draw command buffer."
+            "Failed to submit draw command buffer. VkResult = " +
+            std::to_string(static_cast<int>(submitResult))
         );
     }
 
@@ -336,18 +382,23 @@ void Renderer::DrawFrame()
     presentInfo.pImageIndices =
         &imageIndex;
 
+    std::cout << "[DrawFrame] Before present" << std::endl;
     VkResult presentResult =
         vkQueuePresentKHR(
             m_LogicalDevice.GetPresentQueue(),
             &presentInfo
         );
-
+    std::cout
+        << "[DrawFrame] Present result: "
+        << static_cast<int>(presentResult)
+        << std::endl;
     if (presentResult != VK_SUCCESS)
     {
         throw std::runtime_error(
             "Failed to present swapchain image."
         );
     }
+    std::cout << "[DrawFrame] End" << std::endl;
 }
 
 void Renderer::StartBenchmark(int shadowMode)

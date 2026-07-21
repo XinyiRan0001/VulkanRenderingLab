@@ -15,13 +15,14 @@ class DescriptorManager
 {
 public:
     DescriptorManager(
-        const LogicalDevice& logicalDevice,
-        const GraphicsPipeline& graphicsPipeline,
-        const Buffer& uniformBuffer,
-        const TextureImage& textureImage,
-        VkImageView shadowImageView,
-        VkSampler shadowSampler
-    );
+    const LogicalDevice& logicalDevice,
+    const GraphicsPipeline& graphicsPipeline,
+    const Buffer& uniformBuffer,
+    const TextureImage& textureImage,
+    const TextureImage& hdrTextureImage,
+    VkImageView shadowImageView,
+    VkSampler shadowSampler
+);
 
     ~DescriptorManager();
 
@@ -36,6 +37,7 @@ private:
     const GraphicsPipeline& m_GraphicsPipeline;
     const Buffer& m_UniformBuffer;
     const TextureImage& m_TextureImage;
+    const TextureImage& m_HDRTextureImage;
 
     VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;

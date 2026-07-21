@@ -7,17 +7,38 @@
 #include "RenderPass.h"
 #include "Swapchain.h"
 
+#include <vector>
+
 class GraphicsPipeline
 {
 public:
-    GraphicsPipeline(const LogicalDevice& logicalDevice,
+    GraphicsPipeline(
+        const LogicalDevice& logicalDevice,
         const RenderPass& renderPass,
-        const Swapchain& swapchain);
+        const Swapchain& swapchain,
+        VkDescriptorSetLayout descriptorSetLayout
+    );
 
     ~GraphicsPipeline();
 
-    VkPipeline GetPipeline() const { return m_GraphicsPipeline; }
-    VkPipelineLayout GetLayout() const { return m_PipelineLayout; }
+    GraphicsPipeline(
+        const GraphicsPipeline&
+    ) = delete;
+
+    GraphicsPipeline& operator=(
+        const GraphicsPipeline&
+    ) = delete;
+
+    VkPipeline GetPipeline() const
+    {
+        return m_GraphicsPipeline;
+    }
+
+    VkPipelineLayout GetLayout() const
+    {
+        return m_PipelineLayout;
+    }
+
     VkDescriptorSetLayout GetDescriptorSetLayout() const
     {
         return m_DescriptorSetLayout;
@@ -28,12 +49,20 @@ private:
     const RenderPass& m_RenderPass;
     const Swapchain& m_Swapchain;
 
-    VkPipelineLayout m_PipelineLayout = VK_NULL_HANDLE;
-    VkPipeline m_GraphicsPipeline = VK_NULL_HANDLE;
-    VkDescriptorSetLayout m_DescriptorSetLayout = VK_NULL_HANDLE;
+    // Non-owning handle. DescriptorSetLayout owns its lifetime.
+    VkDescriptorSetLayout m_DescriptorSetLayout =
+        VK_NULL_HANDLE;
+
+    VkPipelineLayout m_PipelineLayout =
+        VK_NULL_HANDLE;
+
+    VkPipeline m_GraphicsPipeline =
+        VK_NULL_HANDLE;
 
 private:
     void CreateGraphicsPipeline();
-    void CreateDescriptorSetLayout();
-    VkShaderModule CreateShaderModule(const std::vector<char>& code);
+
+    VkShaderModule CreateShaderModule(
+        const std::vector<char>& code
+    );
 };

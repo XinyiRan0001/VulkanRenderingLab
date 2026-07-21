@@ -16,6 +16,7 @@
 #include "ShadowRenderPass.h"
 #include "ShadowFramebuffer.h"
 #include "ShadowPipeline.h"
+#include "SkyboxPipeline.h"
 
 #include <vector>
 
@@ -36,6 +37,7 @@ public:
         const RenderPass& renderPass,
         const Swapchain& swapchain,
         const GraphicsPipeline& graphicsPipeline,
+        const SkyboxPipeline& skyboxPipeline,
         const ShadowRenderPass& shadowRenderPass,
         const ShadowFramebuffer& shadowFramebuffer,
         const ShadowPipeline& shadowPipeline,
@@ -45,7 +47,6 @@ public:
         const std::vector<SubMesh>& subMeshes,
         const std::vector<MaterialData>& materials
     );
-
     ~CommandManager();
 
     CommandManager(const CommandManager&) = delete;
@@ -72,6 +73,7 @@ private:
     const RenderPass& m_RenderPass;
     const Swapchain& m_Swapchain;
     const GraphicsPipeline& m_GraphicsPipeline;
+    const SkyboxPipeline& m_SkyboxPipeline;
     const ShadowRenderPass& m_ShadowRenderPass;
     const ShadowFramebuffer& m_ShadowFramebuffer;
     const ShadowPipeline& m_ShadowPipeline;

@@ -8,39 +8,58 @@
 #include <array>
 #include "Vertex.h"
 
-GraphicsPipeline::GraphicsPipeline(const LogicalDevice& logicalDevice,
+GraphicsPipeline::GraphicsPipeline(
+    const LogicalDevice& logicalDevice,
     const RenderPass& renderPass,
-    const Swapchain& swapchain)
+    const Swapchain& swapchain,
+    VkDescriptorSetLayout descriptorSetLayout
+)
     : m_LogicalDevice(logicalDevice),
     m_RenderPass(renderPass),
-    m_Swapchain(swapchain)
+    m_Swapchain(swapchain),
+    m_DescriptorSetLayout(descriptorSetLayout)
 {
-    CreateDescriptorSetLayout();
+    if (m_DescriptorSetLayout == VK_NULL_HANDLE)
+    {
+        throw std::runtime_error(
+            "GraphicsPipeline received a null descriptor set layout."
+        );
+    }
+
     CreateGraphicsPipeline();
-    std::cout << "GraphicsPipeline created successfully." << std::endl;
+
+    std::cout
+        << "GraphicsPipeline created successfully."
+        << std::endl;
 }
 
 GraphicsPipeline::~GraphicsPipeline()
 {
-    VkDevice device = m_LogicalDevice.GetHandle();
+    VkDevice device =
+        m_LogicalDevice.GetHandle();
 
     if (m_GraphicsPipeline != VK_NULL_HANDLE)
     {
-        vkDestroyPipeline(device, m_GraphicsPipeline, nullptr);
+        vkDestroyPipeline(
+            device,
+            m_GraphicsPipeline,
+            nullptr
+        );
+
+        m_GraphicsPipeline =
+            VK_NULL_HANDLE;
     }
 
     if (m_PipelineLayout != VK_NULL_HANDLE)
     {
-        vkDestroyPipelineLayout(device, m_PipelineLayout, nullptr);
-    }
-
-    if (m_DescriptorSetLayout != VK_NULL_HANDLE)
-    {
-        vkDestroyDescriptorSetLayout(
+        vkDestroyPipelineLayout(
             device,
-            m_DescriptorSetLayout,
+            m_PipelineLayout,
             nullptr
         );
+
+        m_PipelineLayout =
+            VK_NULL_HANDLE;
     }
 }
 
@@ -63,65 +82,6 @@ VkShaderModule GraphicsPipeline::CreateShaderModule(const std::vector<char>& cod
     }
 
     return shaderModule;
-}
-
-void GraphicsPipeline::CreateDescriptorSetLayout()
-{
-    VkDescriptorSetLayoutBinding uboLayoutBinding{};
-    uboLayoutBinding.binding = 0;
-    uboLayoutBinding.descriptorType =
-        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    uboLayoutBinding.descriptorCount = 1;
-    uboLayoutBinding.stageFlags =
-        VK_SHADER_STAGE_VERTEX_BIT |
-        VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
-    samplerLayoutBinding.binding = 1;
-    samplerLayoutBinding.descriptorType =
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    samplerLayoutBinding.descriptorCount = 1;
-    samplerLayoutBinding.stageFlags =
-        VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding shadowLayoutBinding{};
-    shadowLayoutBinding.binding = 2;
-
-    shadowLayoutBinding.descriptorType =
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-
-    shadowLayoutBinding.descriptorCount = 1;
-
-    shadowLayoutBinding.stageFlags =
-        VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    std::array<VkDescriptorSetLayoutBinding, 3> bindings =
-    {
-        uboLayoutBinding,
-        samplerLayoutBinding,
-        shadowLayoutBinding
-    };
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType =
-        VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-
-    layoutInfo.bindingCount =
-        static_cast<uint32_t>(bindings.size());
-
-    layoutInfo.pBindings = bindings.data();
-
-    if (vkCreateDescriptorSetLayout(
-        m_LogicalDevice.GetHandle(),
-        &layoutInfo,
-        nullptr,
-        &m_DescriptorSetLayout
-    ) != VK_SUCCESS)
-    {
-        throw std::runtime_error(
-            "Failed to create descriptor set layout."
-        );
-    }
 }
 
 void GraphicsPipeline::CreateGraphicsPipeline()

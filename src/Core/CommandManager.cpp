@@ -1,6 +1,7 @@
 #include "CommandManager.h"
 #include "DescriptorManager.h"
 #include "GraphicsPipeline.h"
+#include "SkyboxPipeline.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -21,6 +22,7 @@ CommandManager::CommandManager(
     const RenderPass& renderPass,
     const Swapchain& swapchain,
     const GraphicsPipeline& graphicsPipeline,
+    const SkyboxPipeline& skyboxPipeline,
     const ShadowRenderPass& shadowRenderPass,
     const ShadowFramebuffer& shadowFramebuffer,
     const ShadowPipeline& shadowPipeline,
@@ -36,6 +38,7 @@ CommandManager::CommandManager(
     m_RenderPass(renderPass),
     m_Swapchain(swapchain),
     m_GraphicsPipeline(graphicsPipeline),
+    m_SkyboxPipeline(skyboxPipeline),
     m_ShadowRenderPass(shadowRenderPass),
     m_ShadowFramebuffer(shadowFramebuffer),
     m_ShadowPipeline(shadowPipeline),
@@ -256,12 +259,6 @@ void CommandManager::RecordCommandBuffers()
             VK_SUBPASS_CONTENTS_INLINE
         );
 
-        vkCmdBindPipeline(
-            m_CommandBuffers[i],
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_ShadowPipeline.GetPipeline()
-        );
-
         VkDescriptorSet shadowDescriptorSet =
             m_DescriptorManager.GetDescriptorSet();
 
@@ -301,6 +298,12 @@ void CommandManager::RecordCommandBuffers()
             VK_INDEX_TYPE_UINT32
         );
 
+        vkCmdBindPipeline(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_ShadowPipeline.GetPipeline()
+        );
+
         for (const SubMesh& subMesh : m_SubMeshes)
         {
             vkCmdDrawIndexed(
@@ -331,6 +334,7 @@ void CommandManager::RecordCommandBuffers()
         // =====================================================
 
         VkRenderPassBeginInfo renderPassInfo{};
+
         renderPassInfo.sType =
             VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 
@@ -370,7 +374,7 @@ void CommandManager::RecordCommandBuffers()
         renderPassInfo.clearValueCount =
             static_cast<uint32_t>(
                 clearValues.size()
-                );
+            );
 
         renderPassInfo.pClearValues =
             clearValues.data();
@@ -382,20 +386,57 @@ void CommandManager::RecordCommandBuffers()
             2
         );
 
+        // =====================================================
+        // Begin main render pass
+        // =====================================================
+
         vkCmdBeginRenderPass(
             m_CommandBuffers[i],
             &renderPassInfo,
             VK_SUBPASS_CONTENTS_INLINE
         );
 
+        // =====================================================
+        // Skybox
+        // =====================================================
+
+        VkDescriptorSet descriptorSet =
+            m_DescriptorManager.GetDescriptorSet();
+
+        vkCmdBindPipeline(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_SkyboxPipeline.GetPipeline()
+        );
+
+        vkCmdBindDescriptorSets(
+            m_CommandBuffers[i],
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_SkyboxPipeline.GetLayout(),
+            0,
+            1,
+            &descriptorSet,
+            0,
+            nullptr
+        );
+
+         vkCmdDraw(
+             m_CommandBuffers[i],
+             36,
+             1,
+             0,
+             0
+         );
+
+        // =====================================================
+        // Main scene
+        // =====================================================
+
         vkCmdBindPipeline(
             m_CommandBuffers[i],
             VK_PIPELINE_BIND_POINT_GRAPHICS,
             m_GraphicsPipeline.GetPipeline()
         );
-
-        VkDescriptorSet descriptorSet =
-            m_DescriptorManager.GetDescriptorSet();
 
         vkCmdBindDescriptorSets(
             m_CommandBuffers[i],

@@ -20,10 +20,12 @@ class GraphicsPipeline;
 class Buffer;
 class Image;
 class DescriptorManager;
+class DescriptorSetLayout;
 class TextureImage;
 class ShadowRenderPass;
 class ShadowFramebuffer;
 class ShadowPipeline;
+class SkyboxPipeline;
 
 class VulkanContext
 {
@@ -49,6 +51,8 @@ private:
     std::unique_ptr<LogicalDevice> m_LogicalDevice;
     std::unique_ptr<Swapchain> m_Swapchain;
     std::unique_ptr<RenderPass> m_RenderPass;
+    std::unique_ptr<DescriptorSetLayout>
+    m_DescriptorSetLayout;
     std::unique_ptr<GraphicsPipeline> m_GraphicsPipeline;
     std::unique_ptr<Image> m_DepthImage;
     std::unique_ptr<Image> m_ShadowDepthImage;
@@ -61,8 +65,10 @@ private:
     std::unique_ptr<Buffer> m_IndexBuffer;
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<TextureImage> m_TextureImage;
+    std::unique_ptr<TextureImage> m_HDRTextureImage;
     std::unique_ptr<DescriptorManager> m_DescriptorManager;
     std::unique_ptr<ShadowPipeline> m_ShadowPipeline;
+    std::unique_ptr<SkyboxPipeline> m_SkyboxPipeline;
 
     float m_CameraYaw = 0.0f;
     float m_CameraPitch = 0.15f;

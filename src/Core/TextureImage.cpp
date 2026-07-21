@@ -1,7 +1,7 @@
 #include "TextureImage.h"
 
 #include "Buffer.h"
-
+#include <vector>
 #include <iostream>
 #include <stdexcept>
 
@@ -13,6 +13,8 @@ TextureImage::TextureImage(
     : m_PhysicalDevice(physicalDevice),
     m_LogicalDevice(logicalDevice)
 {
+    m_Format = VK_FORMAT_R8G8B8A8_SRGB;
+
     if (!textureData.IsValid())
     {
         throw std::runtime_error(
@@ -34,6 +36,40 @@ TextureImage::TextureImage(
 
     std::cout
         << "TextureImage uploaded successfully."
+        << std::endl;
+}
+
+TextureImage::TextureImage(
+    const PhysicalDevice& physicalDevice,
+    const LogicalDevice& logicalDevice,
+    const HDRTextureData& textureData
+)
+    : m_PhysicalDevice(physicalDevice),
+    m_LogicalDevice(logicalDevice)
+{
+    m_Format = VK_FORMAT_R32G32B32A32_SFLOAT;
+
+    if (!textureData.IsValid())
+    {
+        throw std::runtime_error(
+            "Cannot create Vulkan texture from invalid HDRTextureData."
+        );
+    }
+
+    CreateImage(
+        static_cast<uint32_t>(textureData.width),
+        static_cast<uint32_t>(textureData.height),
+        m_Format,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT
+    );
+
+    UploadPixels(textureData);
+    CreateImageView();
+    CreateSampler();
+
+    std::cout
+        << "HDR TextureImage uploaded successfully."
         << std::endl;
 }
 
@@ -262,6 +298,85 @@ void TextureImage::UploadPixels(
 
     stagingBuffer.UploadData(
         textureData.pixels.data(),
+        imageSize
+    );
+
+    TransitionImageLayout(
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    );
+
+    CopyBufferToImage(
+        stagingBuffer.GetHandle(),
+        static_cast<uint32_t>(textureData.width),
+        static_cast<uint32_t>(textureData.height)
+    );
+
+    TransitionImageLayout(
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    );
+}
+
+void TextureImage::UploadPixels(
+    const HDRTextureData& textureData
+)
+{
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(textureData.width) *
+        static_cast<std::size_t>(textureData.height);
+
+    const std::size_t expectedFloatCount =
+        pixelCount * 3;
+
+    if (textureData.pixels.size() != expectedFloatCount)
+    {
+        throw std::runtime_error(
+            "HDR texture pixel count does not match RGB dimensions."
+        );
+    }
+
+    // Vulkan texture format is RGBA32F, while stb_image loaded RGB32F.
+    std::vector<float> rgbaPixels(pixelCount * 4);
+
+    for (std::size_t pixelIndex = 0;
+        pixelIndex < pixelCount;
+        ++pixelIndex)
+    {
+        const std::size_t rgbIndex =
+            pixelIndex * 3;
+
+        const std::size_t rgbaIndex =
+            pixelIndex * 4;
+
+        rgbaPixels[rgbaIndex + 0] =
+            textureData.pixels[rgbIndex + 0];
+
+        rgbaPixels[rgbaIndex + 1] =
+            textureData.pixels[rgbIndex + 1];
+
+        rgbaPixels[rgbaIndex + 2] =
+            textureData.pixels[rgbIndex + 2];
+
+        rgbaPixels[rgbaIndex + 3] = 1.0f;
+    }
+
+    const VkDeviceSize imageSize =
+        static_cast<VkDeviceSize>(
+            rgbaPixels.size() * sizeof(float)
+            );
+
+    Buffer stagingBuffer(
+        m_PhysicalDevice,
+        m_LogicalDevice,
+        imageSize,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+    );
+
+    stagingBuffer.UploadData(
+        rgbaPixels.data(),
         imageSize
     );
 
