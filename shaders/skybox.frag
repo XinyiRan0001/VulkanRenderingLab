@@ -65,7 +65,9 @@ void main()
         normalize(inDirection);
 
     vec2 uv =
-        DirectionToEquirectangularUV(direction);
+        DirectionToEquirectangularUV(
+            direction
+        );
 
     vec3 hdrColor =
         texture(
@@ -73,19 +75,21 @@ void main()
             uv
         ).rgb;
 
-    const float exposure = 1.0;
+    // Temporary fixed exposure.
+    // Later this can be passed from the UBO.
+    const float exposure =
+        1.0;
 
-    hdrColor *= exposure;
+    hdrColor *=
+        exposure;
 
     vec3 mappedColor =
-        ToneMapACES(hdrColor);
-
-    mappedColor =
-        pow(
-            mappedColor,
-            vec3(1.0 / 2.2)
+        ToneMapACES(
+            hdrColor
         );
 
+    // Do not apply manual gamma correction here.
+    // The swapchain format is VK_FORMAT_B8G8R8A8_SRGB.
     outColor =
         vec4(
             mappedColor,

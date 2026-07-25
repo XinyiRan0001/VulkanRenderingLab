@@ -3,10 +3,26 @@
 #define GLFW_INCLUDE_VULKAN
 
 #include "RenderObject.h"
+#include "EnvironmentRenderPass.h"
+#include "EnvironmentFramebuffer.h"
+#include "HDRToCubemapPipeline.h"
+#include "HDRToCubemapDescriptorManager.h"
+#include "PrefilterFramebuffer.h"
+#include "PrefilterPipeline.h"
+#include "PrefilterDescriptorManager.h"
+#include "BRDFLUTRenderPass.h"
+#include "BRDFLUTFramebuffer.h"
+#include "BRDFLUTPipeline.h"
+#include "IrradianceRenderPass.h"
+#include "IrradianceFramebuffer.h"
+#include "IrradiancePipeline.h"
+#include "IrradianceDescriptorManager.h"
+
 #include <vector>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <memory>
+
 
 class Window;
 class PhysicalDevice;
@@ -39,6 +55,7 @@ public:
     VkSurfaceKHR GetSurface() const { return m_Surface; }
     void DrawFrame();
     void UpdateWindowTitle(double deltaTime);
+    void ToggleSkybox();
 
 private:
     Window& m_Window;
@@ -66,6 +83,48 @@ private:
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<TextureImage> m_TextureImage;
     std::unique_ptr<TextureImage> m_HDRTextureImage;
+    std::unique_ptr<HDRToCubemapPipeline>
+        m_HDRToCubemapPipeline;
+    std::unique_ptr<HDRToCubemapDescriptorManager>
+        m_HDRToCubemapDescriptorManager;
+    std::unique_ptr<PrefilterFramebuffer>
+        m_PrefilterFramebuffer;
+    std::unique_ptr<PrefilterPipeline>
+        m_PrefilterPipeline;
+    std::unique_ptr<PrefilterDescriptorManager>
+        m_PrefilterDescriptorManager;
+    std::unique_ptr<TextureImage> m_EnvironmentCubemap;
+    std::unique_ptr<TextureImage> m_PrefilteredEnvironmentCubemap;
+    std::unique_ptr<TextureImage>
+        m_BRDFLUT;
+    std::unique_ptr<BRDFLUTRenderPass>
+        m_BRDFLUTRenderPass;
+
+    std::unique_ptr<BRDFLUTFramebuffer>
+        m_BRDFLUTFramebuffer;
+    std::unique_ptr<BRDFLUTPipeline>
+        m_BRDFLUTPipeline;
+
+    std::unique_ptr<TextureImage>
+        m_IrradianceCubemap;
+
+    std::unique_ptr<IrradianceRenderPass>
+        m_IrradianceRenderPass;
+
+    std::unique_ptr<IrradianceFramebuffer>
+        m_IrradianceFramebuffer;
+
+    std::unique_ptr<IrradiancePipeline>
+        m_IrradiancePipeline;
+
+    std::unique_ptr<IrradianceDescriptorManager>
+        m_IrradianceDescriptorManager;
+
+    std::unique_ptr<EnvironmentRenderPass>
+        m_EnvironmentRenderPass;
+
+    std::unique_ptr<EnvironmentFramebuffer>
+        m_EnvironmentFramebuffer;
     std::unique_ptr<DescriptorManager> m_DescriptorManager;
     std::unique_ptr<ShadowPipeline> m_ShadowPipeline;
     std::unique_ptr<SkyboxPipeline> m_SkyboxPipeline;
@@ -87,6 +146,10 @@ private:
 
     bool m_PointLightEnabled = true;
     bool m_PointLightAnimationEnabled = true;
+    bool m_EnableSkybox = true;
+    bool m_EnableEnvironmentLighting = true;
+    float m_Exposure = 1.0f;
+
 
     float m_PointLightAngle = 0.0f;
     double m_LastLightUpdateTime = 0.0;
@@ -103,4 +166,8 @@ private:
     void CreateSurface();
     void SetupCameraControls();
     void CreateShadowSampler();
+    void GenerateEnvironmentCubemap();
+    void GeneratePrefilteredEnvironmentCubemap();
+    void GenerateBRDFLUT();
+    void GenerateIrradianceCubemap();
 };

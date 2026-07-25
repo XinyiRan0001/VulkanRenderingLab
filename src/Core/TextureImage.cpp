@@ -73,6 +73,88 @@ TextureImage::TextureImage(
         << std::endl;
 }
 
+TextureImage::TextureImage(
+    const PhysicalDevice& physicalDevice,
+    const LogicalDevice& logicalDevice,
+    const EmptyTextureImageCreateInfo& createInfo
+)
+    : m_PhysicalDevice(physicalDevice),
+    m_LogicalDevice(logicalDevice)
+{
+    if (createInfo.width == 0 ||
+        createInfo.height == 0)
+    {
+        throw std::runtime_error(
+            "Empty texture image dimensions must be greater than zero."
+        );
+    }
+
+    if (createInfo.mipLevels == 0 ||
+        createInfo.arrayLayers == 0)
+    {
+        throw std::runtime_error(
+            "Empty texture image must contain at least one mip level and one array layer."
+        );
+    }
+
+    if (createInfo.viewType == VK_IMAGE_VIEW_TYPE_CUBE &&
+        createInfo.arrayLayers != 6)
+    {
+        throw std::runtime_error(
+            "A cubemap texture image must contain exactly six array layers."
+        );
+    }
+
+    m_Format =
+        createInfo.format;
+
+    m_MipLevels =
+        createInfo.mipLevels;
+
+    m_ArrayLayers =
+        createInfo.arrayLayers;
+
+    CreateImage(
+        createInfo.width,
+        createInfo.height,
+        createInfo.format,
+        createInfo.usage,
+        createInfo.flags,
+        createInfo.mipLevels,
+        createInfo.arrayLayers
+    );
+
+    CreateImageView(
+        createInfo.viewType,
+        createInfo.mipLevels,
+        createInfo.arrayLayers
+    );
+        if (createInfo.viewType == VK_IMAGE_VIEW_TYPE_CUBE)
+        {
+            CreateCubemapLayerImageViews(
+                createInfo.mipLevels
+            );
+        }
+
+    CreateSampler(
+        createInfo.addressMode,
+        static_cast<float>(
+            createInfo.mipLevels - 1
+        )
+    );
+
+    std::cout
+        << "Empty TextureImage created: "
+        << createInfo.width
+        << "x"
+        << createInfo.height
+        << ", layers: "
+        << createInfo.arrayLayers
+        << ", mip levels: "
+        << createInfo.mipLevels
+        << std::endl;
+}
+
 TextureImage::~TextureImage()
 {
     VkDevice device = m_LogicalDevice.GetHandle();
@@ -86,6 +168,22 @@ TextureImage::~TextureImage()
         );
 
         m_Sampler = VK_NULL_HANDLE;
+    }
+
+    for (VkImageView& layerImageView :
+        m_LayerImageViews)
+    {
+        if (layerImageView != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(
+                device,
+                layerImageView,
+                nullptr
+            );
+
+            layerImageView =
+                VK_NULL_HANDLE;
+        }
     }
 
     if (m_ImageView != VK_NULL_HANDLE)
@@ -126,21 +224,27 @@ void TextureImage::CreateImage(
     uint32_t width,
     uint32_t height,
     VkFormat format,
-    VkImageUsageFlags usage
+    VkImageUsageFlags usage,
+    VkImageCreateFlags flags,
+    uint32_t mipLevels,
+    uint32_t arrayLayers
 )
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType =
         VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-
+    imageInfo.flags = flags;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
 
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
 
-    imageInfo.mipLevels = 1;
-    imageInfo.arrayLayers = 1;
+    imageInfo.mipLevels =
+        mipLevels;
+
+    imageInfo.arrayLayers =
+        arrayLayers;
 
     imageInfo.format = format;
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -276,6 +380,73 @@ void TextureImage::CreateSampler()
     std::cout
         << "Texture sampler created successfully."
         << std::endl;
+}
+
+void TextureImage::CreateSampler(
+    VkSamplerAddressMode addressMode,
+    float maximumLod
+)
+{
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType =
+        VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+
+    samplerInfo.magFilter =
+        VK_FILTER_LINEAR;
+
+    samplerInfo.minFilter =
+        VK_FILTER_LINEAR;
+
+    samplerInfo.addressModeU =
+        addressMode;
+
+    samplerInfo.addressModeV =
+        addressMode;
+
+    samplerInfo.addressModeW =
+        addressMode;
+
+    samplerInfo.anisotropyEnable =
+        VK_FALSE;
+
+    samplerInfo.maxAnisotropy =
+        1.0f;
+
+    samplerInfo.borderColor =
+        VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+
+    samplerInfo.unnormalizedCoordinates =
+        VK_FALSE;
+
+    samplerInfo.compareEnable =
+        VK_FALSE;
+
+    samplerInfo.compareOp =
+        VK_COMPARE_OP_ALWAYS;
+
+    samplerInfo.mipmapMode =
+        VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+    samplerInfo.mipLodBias =
+        0.0f;
+
+    samplerInfo.minLod =
+        0.0f;
+
+    samplerInfo.maxLod =
+        maximumLod;
+
+    if (vkCreateSampler(
+        m_LogicalDevice.GetHandle(),
+        &samplerInfo,
+        nullptr,
+        &m_Sampler
+    ) != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create empty texture sampler."
+        );
+    }
 }
 
 void TextureImage::UploadPixels(
@@ -429,9 +600,207 @@ void TextureImage::CreateImageView()
     }
 }
 
+void TextureImage::CreateImageView(
+    VkImageViewType viewType,
+    uint32_t mipLevels,
+    uint32_t arrayLayers
+)
+{
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType =
+        VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+
+    viewInfo.image =
+        m_Image;
+
+    viewInfo.viewType =
+        viewType;
+
+    viewInfo.format =
+        m_Format;
+
+    viewInfo.subresourceRange.aspectMask =
+        VK_IMAGE_ASPECT_COLOR_BIT;
+
+    viewInfo.subresourceRange.baseMipLevel =
+        0;
+
+    viewInfo.subresourceRange.levelCount =
+        mipLevels;
+
+    viewInfo.subresourceRange.baseArrayLayer =
+        0;
+
+    viewInfo.subresourceRange.layerCount =
+        arrayLayers;
+
+    if (vkCreateImageView(
+        m_LogicalDevice.GetHandle(),
+        &viewInfo,
+        nullptr,
+        &m_ImageView
+    ) != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create empty texture image view."
+        );
+    }
+}
+
+void TextureImage::CreateCubemapLayerImageViews(
+    uint32_t mipLevels
+)
+{
+    constexpr uint32_t faceCount =
+        6;
+
+    if (mipLevels == 0)
+    {
+        throw std::runtime_error(
+            "Cubemap image views require at least one mip level."
+        );
+    }
+
+    VkDevice device =
+        m_LogicalDevice.GetHandle();
+
+    // One 2D image view is required for every:
+    //
+    // mip level × cubemap face
+    //
+    // Example:
+    // 8 mip levels × 6 faces = 48 image views.
+    m_LayerImageViews.clear();
+
+    m_LayerImageViews.reserve(
+        static_cast<size_t>(mipLevels) *
+        faceCount
+    );
+
+    for (uint32_t mipLevel = 0;
+        mipLevel < mipLevels;
+        ++mipLevel)
+    {
+        for (uint32_t faceIndex = 0;
+            faceIndex < faceCount;
+            ++faceIndex)
+        {
+            VkImageViewCreateInfo viewInfo{};
+
+            viewInfo.sType =
+                VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+
+            viewInfo.image =
+                m_Image;
+
+            // A single cubemap face at one mip level
+            // is used as a regular 2D framebuffer attachment.
+            viewInfo.viewType =
+                VK_IMAGE_VIEW_TYPE_2D;
+
+            viewInfo.format =
+                m_Format;
+
+            viewInfo.subresourceRange.aspectMask =
+                VK_IMAGE_ASPECT_COLOR_BIT;
+
+            viewInfo.subresourceRange.baseMipLevel =
+                mipLevel;
+
+            viewInfo.subresourceRange.levelCount =
+                1;
+
+            viewInfo.subresourceRange.baseArrayLayer =
+                faceIndex;
+
+            viewInfo.subresourceRange.layerCount =
+                1;
+
+            VkImageView imageView =
+                VK_NULL_HANDLE;
+
+            if (vkCreateImageView(
+                device,
+                &viewInfo,
+                nullptr,
+                &imageView
+            ) != VK_SUCCESS)
+            {
+                // Clean up any views already created before
+                // propagating the error.
+                for (VkImageView createdView :
+                    m_LayerImageViews)
+                {
+                    if (createdView != VK_NULL_HANDLE)
+                    {
+                        vkDestroyImageView(
+                            device,
+                            createdView,
+                            nullptr
+                        );
+                    }
+                }
+
+                m_LayerImageViews.clear();
+
+                throw std::runtime_error(
+                    "Failed to create cubemap face mip image view."
+                );
+            }
+
+            m_LayerImageViews.push_back(
+                imageView
+            );
+        }
+    }
+
+    std::cout
+        << "Created "
+        << m_LayerImageViews.size()
+        << " cubemap face/mip image views."
+        << std::endl;
+}
+
+VkImageView TextureImage::GetLayerImageView(
+    uint32_t faceIndex,
+    uint32_t mipLevel
+) const
+{
+    constexpr uint32_t faceCount =
+        6;
+
+    if (faceIndex >= faceCount)
+    {
+        throw std::out_of_range(
+            "Cubemap face index is out of range."
+        );
+    }
+
+    const size_t imageViewIndex =
+        static_cast<size_t>(mipLevel) *
+        faceCount +
+        faceIndex;
+
+    if (imageViewIndex >=
+        m_LayerImageViews.size())
+    {
+        throw std::out_of_range(
+            "Cubemap mip level is out of range."
+        );
+    }
+
+    return m_LayerImageViews[
+        imageViewIndex
+    ];
+}
+
 void TextureImage::TransitionImageLayout(
     VkImageLayout oldLayout,
-    VkImageLayout newLayout
+    VkImageLayout newLayout,
+    uint32_t baseMipLevel,
+    uint32_t mipLevelCount,
+    uint32_t baseArrayLayer,
+    uint32_t arrayLayerCount
 )
 {
     QueueFamilyIndices indices =
@@ -483,11 +852,51 @@ void TextureImage::TransitionImageLayout(
     barrier.subresourceRange.aspectMask =
         VK_IMAGE_ASPECT_COLOR_BIT;
 
-    barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseMipLevel =
+        baseMipLevel;
 
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.levelCount =
+        mipLevelCount == VK_REMAINING_MIP_LEVELS
+        ? m_MipLevels - baseMipLevel
+        : mipLevelCount;
+
+    barrier.subresourceRange.baseArrayLayer =
+        baseArrayLayer;
+
+    barrier.subresourceRange.layerCount =
+        arrayLayerCount == VK_REMAINING_ARRAY_LAYERS
+        ? m_ArrayLayers - baseArrayLayer
+        : arrayLayerCount;
+
+    if (baseMipLevel >= m_MipLevels)
+    {
+        throw std::out_of_range(
+            "Texture image base mip level is out of range."
+        );
+    }
+
+    if (baseArrayLayer >= m_ArrayLayers)
+    {
+        throw std::out_of_range(
+            "Texture image base array layer is out of range."
+        );
+    }
+
+    if (barrier.subresourceRange.levelCount >
+        m_MipLevels - baseMipLevel)
+    {
+        throw std::out_of_range(
+            "Texture image mip transition range is out of range."
+        );
+    }
+
+    if (barrier.subresourceRange.layerCount >
+        m_ArrayLayers - baseArrayLayer)
+    {
+        throw std::out_of_range(
+            "Texture image layer transition range is out of range."
+        );
+    }
 
     VkPipelineStageFlags sourceStage = 0;
     VkPipelineStageFlags destinationStage = 0;

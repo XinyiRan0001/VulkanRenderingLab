@@ -20,6 +20,10 @@ public:
     const Buffer& uniformBuffer,
     const TextureImage& textureImage,
     const TextureImage& hdrTextureImage,
+    const TextureImage& environmentCubemap,
+    const TextureImage& prefilteredEnvironmentCubemap,
+    const TextureImage& brdfLUT,
+    const TextureImage& irradianceCubemap,
     VkImageView shadowImageView,
     VkSampler shadowSampler
 );
@@ -38,7 +42,13 @@ private:
     const Buffer& m_UniformBuffer;
     const TextureImage& m_TextureImage;
     const TextureImage& m_HDRTextureImage;
-
+    const TextureImage& m_EnvironmentCubemap;
+    const TextureImage&
+        m_PrefilteredEnvironmentCubemap;
+    const TextureImage&
+        m_BRDFLUT;
+    const TextureImage&
+        m_IrradianceCubemap;
     VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
     VkImageView m_ShadowImageView = VK_NULL_HANDLE;

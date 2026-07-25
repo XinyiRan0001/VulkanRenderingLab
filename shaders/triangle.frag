@@ -23,6 +23,14 @@ layout(binding = 0) uniform UniformBufferObject
 layout(binding = 1) uniform sampler2D texSampler;
 layout(binding = 2) uniform sampler2D shadowMap;
 layout(binding = 3) uniform sampler2D hdrEnvironment;
+layout(binding = 4)
+    uniform samplerCube environmentCubemap;
+layout(binding = 5)
+    uniform samplerCube
+        prefilteredEnvironmentMap;
+layout(binding = 6) uniform sampler2D brdfLUT;
+layout(binding = 7)
+    uniform samplerCube irradianceMap;
 
 layout(push_constant) uniform MaterialPushConstant
 {
@@ -484,6 +492,31 @@ vec3 FresnelSchlick(
         );
 }
 
+vec3 FresnelSchlickRoughness(
+    float cosineTheta,
+    vec3 reflectanceAtNormalIncidence,
+    float roughness
+)
+{
+    return
+        reflectanceAtNormalIncidence +
+        (
+            max(
+                vec3(1.0 - roughness),
+                reflectanceAtNormalIncidence
+            ) -
+            reflectanceAtNormalIncidence
+        ) *
+        pow(
+            clamp(
+                1.0 - cosineTheta,
+                0.0,
+                1.0
+            ),
+            5.0
+        );
+}
+
 
 // Evaluates the direct Cook-Torrance BRDF for one light.
 vec3 EvaluateCookTorranceLight(
@@ -641,58 +674,11 @@ vec2 DirectionToEquirectangularUV(vec3 direction)
 // =============================================================
 // Main
 // =============================================================
-
 void main()
 {
-    // ---------------------------------------------------------
-    // Shadow map debug view
-    // ---------------------------------------------------------
-
-    if (fragShadowMode == 4)
-    {
-        vec3 projected =
-            fragLightSpacePosition.xyz /
-            fragLightSpacePosition.w;
-
-        projected.xy =
-            projected.xy * 0.5 + 0.5;
-
-        if (projected.x < 0.0 ||
-            projected.x > 1.0 ||
-            projected.y < 0.0 ||
-            projected.y > 1.0)
-        {
-            outColor =
-                vec4(
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0
-                );
-
-            return;
-        }
-
-        float depth =
-            texture(
-                shadowMap,
-                projected.xy
-            ).r;
-
-        outColor =
-            vec4(
-                depth,
-                depth,
-                depth,
-                1.0
-            );
-
-        return;
-    }
-
-    // ---------------------------------------------------------
-    // Base material colour
-    // ---------------------------------------------------------
+    // =========================================================
+    // Material properties
+    // =========================================================
 
     vec3 baseColor;
 
@@ -721,261 +707,246 @@ void main()
             fragWorldPosition
         );
 
-    // ---------------------------------------------------------
-    // Temporary global material parameters
-    //
-    // The character is currently treated as a rough dielectric.
-    // A per-material roughness system will be added later.
-    // ---------------------------------------------------------
-
     float metallic =
-        material.properties.x;
+        clamp(
+            material.properties.x,
+            0.0,
+            1.0
+        );
 
     float roughness =
-        material.properties.y;
-
-    float ao =
-        material.properties.z;
-
-    // ---------------------------------------------------------
-    // Ambient lighting
-    //
-    // Non-metal materials such as the character receive only
-    // weak indirect environment illumination.
-    //
-    // Metallic materials do not use diffuse ambient lighting.
-    // Their HDR reflection will be implemented separately.
-    // ---------------------------------------------------------
-
-    const float ambientStrength =
-        0.08;
-
-    vec3 ambientLighting =
-        baseColor *
-        ambientStrength *
-        ao *
-        (1.0 - metallic);
-
-    // ---------------------------------------------------------
-    // Temporary metallic HDR reflection
-    //
-    // Only metallic materials receive this environment
-    // reflection. The character has metallic = 0.0, so it is
-    // not affected by this term.
-    // ---------------------------------------------------------
-
-    vec3 reflectionDirection =
-        reflect(
-            -viewDirection,
-            normal
+        clamp(
+            material.properties.y,
+            0.02,
+            1.0
         );
 
-    vec2 reflectionUV =
-        DirectionToEquirectangularUV(
-            reflectionDirection
-        );
-
-    vec3 reflectedEnvironment =
-        texture(
-            hdrEnvironment,
-            reflectionUV
-        ).rgb;
-
-    // Metals use their base colour as the normal-incidence
-    // reflection colour.
-    vec3 metallicF0 =
-        baseColor;
-
-    float NdotV =
-        max(
-            dot(
-                normal,
-                viewDirection
-            ),
-            0.0
-        );
-
-    vec3 environmentFresnel =
-        metallicF0 +
-        (vec3(1.0) - metallicF0) *
-        pow(
-            1.0 - NdotV,
-            5.0
-        );
-
-    // This does not blur the reflection yet. It only reduces
-    // its strength for rough materials until a prefiltered
-    // environment map is implemented.
-    float roughnessAttenuation =
-        mix(
-            1.0,
-            0.20,
-            roughness
-        );
-
-    const float reflectionStrength =
-        0.35;
-
-    vec3 specularEnvironment =
-        reflectedEnvironment *
-        environmentFresnel *
-        metallic *
-        roughnessAttenuation *
-        reflectionStrength;
-
-    // ---------------------------------------------------------
-    // Fixed front white light
-    // ---------------------------------------------------------
-
-    const vec3 fixedLightPosition =
-        vec3(
+    float ambientOcclusion =
+        clamp(
+            material.properties.z,
             0.0,
-            2.2,
-            3.5
+            1.0
         );
 
-    vec3 toFixedLight =
-        fixedLightPosition -
+    // =========================================================
+    // Direct point light
+    // =========================================================
+
+    vec3 lightOffset =
+        ubo.pointLight.position.xyz -
         fragWorldPosition;
 
-    float fixedLightDistance =
+    float lightDistance =
         length(
-            toFixedLight
+            lightOffset
         );
 
-    vec3 fixedLightDirection =
-        normalize(
-            toFixedLight
-        );
+    vec3 lightDirection =
+        lightDistance > 0.0001
+        ? lightOffset / lightDistance
+        : vec3(0.0, 1.0, 0.0);
 
-    float fixedAttenuation =
+    float attenuation =
         1.0 /
-        (
-            1.0 +
-            0.12 * fixedLightDistance +
-            0.04 *
-            fixedLightDistance *
-            fixedLightDistance
+        max(
+            lightDistance *
+            lightDistance,
+            0.01
         );
 
-    const float fixedLightIntensity = 1.4;
-
-    vec3 fixedRadiance =
-        vec3(1.0) *
-        fixedLightIntensity *
-        fixedAttenuation;
-
-    vec3 fixedLighting =
-        EvaluateCookTorranceLight(
-            baseColor,
-            normal,
-            viewDirection,
-            fixedLightDirection,
-            fixedRadiance,
-            metallic,
-            roughness
-        );
-
-    // ---------------------------------------------------------
-    // Orbiting point light
-    // ---------------------------------------------------------
-
-    vec3 pointLightPosition =
-        ubo.pointLight.position.xyz;
-
-    vec3 toPointLight =
-        pointLightPosition -
-        fragWorldPosition;
-
-    float pointLightDistance =
-        length(
-            toPointLight
-        );
-
-    vec3 pointLightDirection =
-        normalize(
-            toPointLight
-        );
-
-    float pointAttenuation =
-        1.0 /
-        (
-            1.0 +
-            0.35 * pointLightDistance +
-            0.20 *
-            pointLightDistance *
-            pointLightDistance
-        );
-
-    bool pointLightEnabled =
-        ubo.pointLight.color.a >
-        0.001;
-
-    vec3 pointRadiance =
+    vec3 lightRadiance =
         ubo.pointLight.color.rgb *
         ubo.pointLight.color.a *
-        pointAttenuation;
+        attenuation;
 
-    vec3 pointLighting =
+    vec3 directLighting =
         EvaluateCookTorranceLight(
             baseColor,
             normal,
             viewDirection,
-            pointLightDirection,
-            pointRadiance,
+            lightDirection,
+            lightRadiance,
             metallic,
             roughness
         );
 
-    // ---------------------------------------------------------
-    // Shadow selection
-    //
-    // The shadow map follows the point light when it is enabled.
-    // Otherwise it represents the fixed front light.
-    // ---------------------------------------------------------
-
-    vec3 shadowLightDirection =
-        pointLightEnabled
-        ? pointLightDirection
-        : fixedLightDirection;
+    // =========================================================
+    // Shadow
+    // =========================================================
 
     float shadow =
         CalculateShadow(
             fragLightSpacePosition,
             normal,
-            shadowLightDirection
+            lightDirection
         );
 
-    if (pointLightEnabled)
+    directLighting *=
+        1.0 -
+        shadow;
+
+    // =========================================================
+    // Image-based lighting
+    // =========================================================
+
+    bool environmentLightingEnabled =
+        ubo.shadowSettings.y != 0;
+
+    vec3 environmentLighting =
+        vec3(0.0);
+
+    if (environmentLightingEnabled)
     {
-        pointLighting *=
+        vec3 F0 =
+            mix(
+                vec3(0.04),
+                baseColor,
+                metallic
+            );
+
+        float NdotV =
+            max(
+                dot(
+                    normal,
+                    viewDirection
+                ),
+                0.001
+            );
+
+        vec3 fresnel =
+            FresnelSchlickRoughness(
+                NdotV,
+                F0,
+                roughness
+            );
+
+        vec3 diffuseWeight =
+            (
+                vec3(1.0) -
+                fresnel
+            ) *
             (
                 1.0 -
-                shadow
+                metallic
             );
+
+        // -----------------------------------------------------
+        // Diffuse IBL
+        // -----------------------------------------------------
+
+        vec3 irradiance =
+            texture(
+                irradianceMap,
+                normal
+            ).rgb;
+
+        vec3 diffuseEnvironmentLighting =
+            diffuseWeight *
+            irradiance *
+            baseColor;
+
+        // -----------------------------------------------------
+        // Specular IBL
+        // -----------------------------------------------------
+
+        vec3 reflectionDirection =
+            normalize(
+                reflect(
+                    -viewDirection,
+                    normal
+                )
+            );
+
+        const float maxMipLevel =
+            7.0;
+
+        vec3 reflectedEnvironment =
+            textureLod(
+                prefilteredEnvironmentMap,
+                reflectionDirection,
+                roughness *
+                maxMipLevel
+            ).rgb;
+
+        vec2 environmentBRDF =
+            texture(
+                brdfLUT,
+                vec2(
+                    NdotV,
+                    roughness
+                )
+            ).rg;
+
+        vec3 specularEnvironmentLighting =
+            reflectedEnvironment *
+            (
+                fresnel *
+                environmentBRDF.x +
+                environmentBRDF.y
+            );
+
+        environmentLighting =
+            (
+                diffuseEnvironmentLighting +
+                specularEnvironmentLighting
+            ) *
+            ambientOcclusion;
+    }
+
+    // =========================================================
+    // Fallback ambient
+    // =========================================================
+
+    vec3 fallbackAmbient =
+        baseColor *
+        0.04 *
+        ambientOcclusion *
+        (
+            1.0 -
+            metallic
+        );
+
+    // =========================================================
+    // Final lighting composition
+    // =========================================================
+
+    vec3 hdrColor =
+        directLighting;
+
+    if (environmentLightingEnabled)
+    {
+        hdrColor +=
+            environmentLighting;
     }
     else
     {
-        fixedLighting *=
-            (
-                1.0 -
-                shadow
-            );
+        hdrColor +=
+            fallbackAmbient;
     }
 
-    // ---------------------------------------------------------
-    // Final output
-    // ---------------------------------------------------------
+    // Exposure is stored as exposure * 100 in shadowSettings.z.
+    float exposure =
+        max(
+            float(
+                ubo.shadowSettings.z
+            ) /
+            100.0,
+            0.01
+        );
 
-    vec3 finalLighting =
-        ambientLighting +
-        specularEnvironment +
-        fixedLighting +
-        pointLighting;
+    // Exponential tone mapping.
+    // The swapchain uses an SRGB format, so no manual gamma
+    // correction is applied here.
+    vec3 mappedColor =
+        vec3(1.0) -
+        exp(
+            -hdrColor *
+            exposure
+        );
 
     outColor =
         vec4(
-            finalLighting,
+            mappedColor,
             1.0
         );
 }

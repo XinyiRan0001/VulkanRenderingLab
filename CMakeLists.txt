@@ -83,6 +83,28 @@ add_executable(VulkanRenderingLab
     src/Core/DescriptorSetLayout.h
     src/Core/SkyboxPipeline.cpp
     src/Core/SkyboxPipeline.h
+
+    src/Core/EnvironmentRenderPass.cpp
+    src/Core/EnvironmentFramebuffer.cpp
+    src/Core/HDRToCubemapPipeline.cpp
+    src/Core/HDRToCubemapDescriptorManager.cpp
+
+    src/Core/PrefilterFramebuffer.h
+    src/Core/PrefilterFramebuffer.cpp
+    src/Core/PrefilterPipeline.h
+    src/Core/PrefilterPipeline.cpp
+    src/Core/PrefilterDescriptorManager.cpp
+    src/Core/PrefilterPipeline.cpp
+
+    src/Core/BRDFLUTRenderPass.cpp
+    src/Core/BRDFLUTFramebuffer.cpp
+    src/Core/BRDFLUTPipeline.cpp
+
+
+    src/Core/IrradianceDescriptorManager.cpp
+    src/Core/IrradianceFramebuffer.cpp
+    src/Core/IrradiancePipeline.cpp
+    src/Core/IrradianceRenderPass.cpp
 )
 
 target_link_libraries(VulkanRenderingLab

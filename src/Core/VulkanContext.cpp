@@ -23,6 +23,7 @@
 #include "ShadowFramebuffer.h"
 #include "ShadowPipeline.h"
 #include "SkyboxPipeline.h"
+#include <algorithm>
 
 #include <limits>
 #include <array>
@@ -506,30 +507,56 @@ m_GraphicsPipeline =
 
             }
 
-            for (MaterialData& material : sphereMesh.materials)
+            // ---------------------------------------------------------
+            // Position the material test spheres
+            // ---------------------------------------------------------
+
+            const float sphereScale =
+                0.65f;
+
+            const float sphereSpacingX =
+                1.65f;
+
+            const float sphereSpacingY =
+                1.65f;
+
+            const glm::vec3 spherePosition =
+                glm::vec3(
+                    -5.2f +
+                        static_cast<float>(sphere) *
+                        1.45f,
+
+                    1.0f -
+                        static_cast<float>(row) *
+                        1.55f,
+
+                    -1.3f
+                );
+
+            for (Vertex& vertex :
+                sphereMesh.vertices)
             {
-                material.hasDiffuseTexture = false;
+                glm::vec3 position =
+                    glm::vec3(
+                        vertex.position[0],
+                        vertex.position[1],
+                        vertex.position[2]
+                    );
 
-                material.metallic = 0.0f;
+                position *=
+                    sphereScale;
 
-                material.roughness =
-                    roughnessValues[sphere];
+                position +=
+                    spherePosition;
 
-                material.ambientOcclusion = 1.0f;
-            }
+                vertex.position[0] =
+                    position.x;
 
-            const float sphereSpacing = 1.35f;
+                vertex.position[1] =
+                    position.y;
 
-            for (Vertex& vertex : sphereMesh.vertices)
-            {
-                vertex.position[0] +=
-                    -3.2f + sphere * 1.35f;
-
-                vertex.position[1] +=
-                    0.7f - row * 1.5f;
-
-                vertex.position[2] +=
-                    -1.3f;
+                vertex.position[2] =
+                    position.z;
             }
             // =========================================================
             // Append Material Lab sphere
@@ -638,6 +665,445 @@ m_GraphicsPipeline =
             *m_LogicalDevice,
             hdrTextureData
         );
+
+    EmptyTextureImageCreateInfo cubemapCreateInfo{};
+
+    constexpr uint32_t environmentCubemapSize =
+        512;
+
+    cubemapCreateInfo.width =
+        environmentCubemapSize;
+
+    cubemapCreateInfo.height =
+        environmentCubemapSize;
+
+    cubemapCreateInfo.format =
+        VK_FORMAT_R16G16B16A16_SFLOAT;
+
+    cubemapCreateInfo.usage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT |
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+    cubemapCreateInfo.flags =
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+    cubemapCreateInfo.viewType =
+        VK_IMAGE_VIEW_TYPE_CUBE;
+
+    cubemapCreateInfo.mipLevels =
+        1;
+
+    cubemapCreateInfo.arrayLayers =
+        6;
+
+    cubemapCreateInfo.addressMode =
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+    m_EnvironmentCubemap =
+        std::make_unique<TextureImage>(
+            *m_PhysicalDevice,
+            *m_LogicalDevice,
+            cubemapCreateInfo
+        );
+
+    // =========================================================
+    // Create irradiance cubemap
+    // =========================================================
+
+    constexpr uint32_t irradianceCubemapSize =
+        128;
+
+    constexpr uint32_t irradianceMipLevels =
+        1;
+
+    EmptyTextureImageCreateInfo
+        irradianceCubemapCreateInfo{};
+
+    irradianceCubemapCreateInfo.width =
+        irradianceCubemapSize;
+
+    irradianceCubemapCreateInfo.height =
+        irradianceCubemapSize;
+
+    irradianceCubemapCreateInfo.format =
+        VK_FORMAT_R16G16B16A16_SFLOAT;
+
+    irradianceCubemapCreateInfo.usage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    irradianceCubemapCreateInfo.flags =
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+    irradianceCubemapCreateInfo.viewType =
+        VK_IMAGE_VIEW_TYPE_CUBE;
+
+    irradianceCubemapCreateInfo.mipLevels =
+        irradianceMipLevels;
+
+    irradianceCubemapCreateInfo.arrayLayers =
+        6;
+
+    irradianceCubemapCreateInfo.addressMode =
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+    std::cout
+        << "[IBL] About to create irradiance cubemap."
+        << std::endl;
+
+    m_IrradianceCubemap =
+        std::make_unique<TextureImage>(
+            *m_PhysicalDevice,
+            *m_LogicalDevice,
+            irradianceCubemapCreateInfo
+        );
+
+    std::cout
+        << "[IBL] Irradiance cubemap created."
+        << std::endl;
+
+    // =========================================================
+    // Create prefiltered environment cubemap
+    //
+    // Each mip level represents a different roughness:
+    // mip 0            = sharp reflection
+    // final mip level  = very rough reflection
+    // =========================================================
+
+    constexpr uint32_t prefilteredCubemapSize =
+        128;
+
+    const uint32_t prefilteredMipLevels =
+        static_cast<uint32_t>(
+            std::floor(
+                std::log2(
+                    static_cast<float>(
+                        prefilteredCubemapSize
+                    )
+                )
+            )
+        ) + 1;
+
+    EmptyTextureImageCreateInfo
+        prefilteredCubemapCreateInfo{};
+
+    prefilteredCubemapCreateInfo.width =
+        prefilteredCubemapSize;
+
+    prefilteredCubemapCreateInfo.height =
+        prefilteredCubemapSize;
+
+    prefilteredCubemapCreateInfo.format =
+        VK_FORMAT_R16G16B16A16_SFLOAT;
+
+    prefilteredCubemapCreateInfo.usage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    prefilteredCubemapCreateInfo.flags =
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+    prefilteredCubemapCreateInfo.viewType =
+        VK_IMAGE_VIEW_TYPE_CUBE;
+
+    prefilteredCubemapCreateInfo.mipLevels =
+        prefilteredMipLevels;
+
+    prefilteredCubemapCreateInfo.arrayLayers =
+        6;
+
+    prefilteredCubemapCreateInfo.addressMode =
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+    std::cout
+        << "[IBL] About to create prefiltered cubemap."
+        << std::endl;
+
+    m_PrefilteredEnvironmentCubemap =
+        std::make_unique<TextureImage>(
+            *m_PhysicalDevice,
+            *m_LogicalDevice,
+            prefilteredCubemapCreateInfo
+        );
+
+    std::cout
+        << "[IBL] Prefiltered environment cubemap created."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Prefiltered cubemap size: "
+        << prefilteredCubemapSize
+        << " x "
+        << prefilteredCubemapSize
+        << std::endl;
+
+    std::cout
+        << "[IBL] Prefiltered mip levels: "
+        << prefilteredMipLevels
+        << std::endl;
+
+    // =========================================================
+    // Create BRDF integration LUT texture
+    // =========================================================
+
+    constexpr uint32_t brdfLUTSize =
+        512;
+
+    EmptyTextureImageCreateInfo
+        brdfLUTCreateInfo{};
+
+    brdfLUTCreateInfo.width =
+        brdfLUTSize;
+
+    brdfLUTCreateInfo.height =
+        brdfLUTSize;
+
+    // RG contains the two split-sum BRDF integration terms.
+    //
+    // TextureImage currently supports arbitrary Vulkan formats,
+    // but RGBA16F is used here for broad render-target support.
+    // The fragment shader will only read the .rg channels.
+    brdfLUTCreateInfo.format =
+        VK_FORMAT_R16G16B16A16_SFLOAT;
+
+    brdfLUTCreateInfo.usage =
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    brdfLUTCreateInfo.flags =
+        0;
+
+    brdfLUTCreateInfo.viewType =
+        VK_IMAGE_VIEW_TYPE_2D;
+
+    brdfLUTCreateInfo.mipLevels =
+        1;
+
+    brdfLUTCreateInfo.arrayLayers =
+        1;
+
+    brdfLUTCreateInfo.addressMode =
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+
+    std::cout
+        << "[IBL] About to create BRDF LUT texture."
+        << std::endl;
+
+    m_BRDFLUT =
+        std::make_unique<TextureImage>(
+            *m_PhysicalDevice,
+            *m_LogicalDevice,
+            brdfLUTCreateInfo
+        );
+
+    std::cout
+        << "[IBL] BRDF LUT texture created."
+        << std::endl;
+
+    std::cout
+        << "[IBL] BRDF LUT size: "
+        << brdfLUTSize
+        << " x "
+        << brdfLUTSize
+        << std::endl;
+
+    std::cout
+    << "[IBL] Creating BRDF LUT render pass..."
+    << std::endl;
+
+    m_BRDFLUTRenderPass =
+        std::make_unique<BRDFLUTRenderPass>(
+            *m_LogicalDevice,
+            m_BRDFLUT->GetFormat()
+        );
+
+    std::cout
+        << "[IBL] Creating BRDF LUT framebuffer..."
+        << std::endl;
+
+    m_BRDFLUTFramebuffer =
+        std::make_unique<BRDFLUTFramebuffer>(
+            *m_LogicalDevice,
+            *m_BRDFLUTRenderPass,
+            *m_BRDFLUT,
+            brdfLUTSize,
+            brdfLUTSize
+        );
+
+    std::cout
+        << "[IBL] Creating BRDF LUT pipeline..."
+        << std::endl;
+
+    m_BRDFLUTPipeline =
+        std::make_unique<BRDFLUTPipeline>(
+            *m_LogicalDevice,
+            *m_BRDFLUTRenderPass,
+            brdfLUTSize
+        );
+
+    std::cout
+        << "[IBL] BRDF LUT pipeline ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating environment render pass..."
+        << std::endl;
+
+    m_EnvironmentRenderPass =
+        std::make_unique<EnvironmentRenderPass>(
+            *m_LogicalDevice,
+            m_EnvironmentCubemap->GetFormat()
+        );
+
+    std::cout
+        << "[IBL] Creating irradiance render pass..."
+        << std::endl;
+
+    m_IrradianceRenderPass =
+        std::make_unique<IrradianceRenderPass>(
+            *m_LogicalDevice,
+            m_IrradianceCubemap->GetFormat()
+        );
+
+    std::cout
+        << "[IBL] Irradiance render pass ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating irradiance framebuffers..."
+        << std::endl;
+
+    m_IrradianceFramebuffer =
+        std::make_unique<IrradianceFramebuffer>(
+            *m_LogicalDevice,
+            *m_IrradianceRenderPass,
+            *m_IrradianceCubemap,
+            irradianceCubemapSize,
+            irradianceCubemapSize
+        );
+
+    std::cout
+        << "[IBL] Irradiance framebuffers ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating irradiance pipeline..."
+        << std::endl;
+
+    m_IrradiancePipeline =
+        std::make_unique<IrradiancePipeline>(
+            *m_LogicalDevice,
+            *m_IrradianceRenderPass,
+            irradianceCubemapSize
+        );
+
+    std::cout
+        << "[IBL] Irradiance pipeline ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating irradiance descriptor set..."
+        << std::endl;
+
+    m_IrradianceDescriptorManager =
+        std::make_unique<IrradianceDescriptorManager>(
+            *m_LogicalDevice,
+            *m_IrradiancePipeline,
+            *m_EnvironmentCubemap
+        );
+
+    std::cout
+        << "[IBL] Irradiance descriptor set ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating prefilter framebuffers..."
+        << std::endl;
+
+    m_PrefilterFramebuffer =
+        std::make_unique<PrefilterFramebuffer>(
+            *m_LogicalDevice,
+            *m_EnvironmentRenderPass,
+            *m_PrefilteredEnvironmentCubemap,
+            prefilteredCubemapSize,
+            prefilteredCubemapSize,
+            prefilteredMipLevels
+        );
+
+    std::cout
+        << "[IBL] Prefilter framebuffers ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating prefilter pipeline..."
+        << std::endl;
+
+    m_PrefilterPipeline =
+        std::make_unique<PrefilterPipeline>(
+            *m_LogicalDevice,
+            *m_EnvironmentRenderPass,
+            prefilteredCubemapSize
+        );
+
+    std::cout
+        << "[IBL] Prefilter pipeline ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating prefilter descriptor set..."
+        << std::endl;
+
+    m_PrefilterDescriptorManager =
+        std::make_unique<PrefilterDescriptorManager>(
+            *m_LogicalDevice,
+            *m_PrefilterPipeline,
+            *m_EnvironmentCubemap
+        );
+
+    std::cout
+        << "[IBL] Prefilter descriptor set ready."
+        << std::endl;
+
+    std::cout
+        << "[IBL] Creating environment framebuffers..."
+        << std::endl;
+
+    m_EnvironmentFramebuffer =
+        std::make_unique<EnvironmentFramebuffer>(
+            *m_LogicalDevice,
+            *m_EnvironmentRenderPass,
+            *m_EnvironmentCubemap,
+            environmentCubemapSize,
+            environmentCubemapSize
+        );
+
+    std::cout
+        << "[IBL] Creating HDR-to-cubemap pipeline..."
+        << std::endl;
+
+    m_HDRToCubemapPipeline =
+        std::make_unique<HDRToCubemapPipeline>(
+            *m_LogicalDevice,
+            *m_EnvironmentRenderPass,
+            environmentCubemapSize
+        );
+
+    std::cout
+        << "[IBL] Creating HDR-to-cubemap descriptor set..."
+        << std::endl;
+
+    m_HDRToCubemapDescriptorManager =
+        std::make_unique<HDRToCubemapDescriptorManager>(
+            *m_LogicalDevice,
+            *m_HDRToCubemapPipeline,
+            *m_HDRTextureImage
+        );
+
+    GenerateEnvironmentCubemap();
+    GenerateIrradianceCubemap();
+    GeneratePrefilteredEnvironmentCubemap();
+    GenerateBRDFLUT();
 
     // =========================================================
     // Load Marry texture
@@ -786,6 +1252,16 @@ m_GraphicsPipeline =
         *m_UniformBuffer,
         *m_TextureImage,
         *m_HDRTextureImage,
+
+        // Original environment cubemap.
+        *m_EnvironmentCubemap,
+
+        *m_PrefilteredEnvironmentCubemap,
+        *m_BRDFLUT,
+
+        // Diffuse irradiance cubemap.
+        *m_IrradianceCubemap,
+
         m_ShadowDepthImage->GetView(),
         m_ShadowSampler
     );
@@ -976,6 +1452,48 @@ void VulkanContext::SetupCameraControls()
             if (context == nullptr)
             {
                 return;
+            }
+
+            if (key == GLFW_KEY_H &&
+                action == GLFW_PRESS)
+            {
+                context->ToggleSkybox();
+            }
+
+            if (key == GLFW_KEY_F5 &&
+                action == GLFW_PRESS)
+            {
+                context->m_Exposure -= 0.1f;
+
+                context->m_Exposure =
+                    std::clamp(
+                        context->m_Exposure,
+                        0.1f,
+                        5.0f
+                    );
+
+                std::cout
+                    << "[HDR] Exposure: "
+                    << context->m_Exposure
+                    << std::endl;
+            }
+
+            if (key == GLFW_KEY_F6 &&
+                action == GLFW_PRESS)
+            {
+                context->m_Exposure += 0.1f;
+
+                context->m_Exposure =
+                    std::clamp(
+                        context->m_Exposure,
+                        0.1f,
+                        5.0f
+                    );
+
+                std::cout
+                    << "[HDR] Exposure: "
+                    << context->m_Exposure
+                    << std::endl;
             }
 
             if (action != GLFW_PRESS &&
@@ -1204,6 +1722,1212 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
     m_FrameCount = 0;
 }
 
+void VulkanContext::GenerateEnvironmentCubemap()
+{
+
+    constexpr uint32_t cubemapFaceCount =
+        6;
+
+    constexpr uint32_t cubemapSize =
+        512;
+
+    const std::array<glm::vec3, cubemapFaceCount>
+        faceDirections =
+    {
+        glm::vec3( 1.0f,  0.0f,  0.0f),
+        glm::vec3(-1.0f,  0.0f,  0.0f),
+        glm::vec3( 0.0f,  1.0f,  0.0f),
+        glm::vec3( 0.0f, -1.0f,  0.0f),
+        glm::vec3( 0.0f,  0.0f,  1.0f),
+        glm::vec3( 0.0f,  0.0f, -1.0f)
+    };
+
+    const std::array<glm::vec3, cubemapFaceCount>
+        faceUpDirections =
+    {
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f,  0.0f,  1.0f),
+        glm::vec3(0.0f,  0.0f, -1.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f)
+    };
+
+    glm::mat4 captureProjection =
+        glm::perspective(
+            glm::radians(90.0f),
+            1.0f,
+            0.1f,
+            10.0f
+        );
+
+    captureProjection[1][1] *=
+        -1.0f;
+
+    const glm::vec3 capturePosition =
+        glm::vec3(0.0f);
+    if (!m_PhysicalDevice ||
+        !m_LogicalDevice ||
+        !m_EnvironmentRenderPass ||
+        !m_EnvironmentFramebuffer ||
+        !m_HDRToCubemapPipeline ||
+        !m_HDRToCubemapDescriptorManager ||
+        !m_EnvironmentCubemap)
+    {
+        throw std::runtime_error(
+            "Cannot generate environment cubemap because an IBL resource is missing."
+        );
+    }
+
+    std::cout
+        << "[IBL] Testing environment cubemap render pass clear..."
+        << std::endl;
+
+    /*constexpr uint32_t cubemapFaceCount =
+        6;
+
+    constexpr uint32_t cubemapSize =
+        512;*/
+
+    QueueFamilyIndices queueFamilyIndices =
+        m_PhysicalDevice->FindQueueFamilies();
+
+    if (!queueFamilyIndices.graphicsFamily.has_value())
+    {
+        throw std::runtime_error(
+            "Cannot generate environment cubemap without a graphics queue family."
+        );
+    }
+
+    VkCommandPoolCreateInfo commandPoolInfo{};
+
+    commandPoolInfo.sType =
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+
+    commandPoolInfo.queueFamilyIndex =
+        queueFamilyIndices.graphicsFamily.value();
+
+    commandPoolInfo.flags =
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+
+    VkCommandPool commandPool =
+        VK_NULL_HANDLE;
+
+    if (vkCreateCommandPool(
+        m_LogicalDevice->GetHandle(),
+        &commandPoolInfo,
+        nullptr,
+        &commandPool
+    ) != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create environment cubemap command pool."
+        );
+    }
+
+    VkCommandBuffer commandBuffer =
+        VK_NULL_HANDLE;
+
+    try
+    {
+        VkCommandBufferAllocateInfo allocationInfo{};
+
+        allocationInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+
+        allocationInfo.commandPool =
+            commandPool;
+
+        allocationInfo.level =
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+        allocationInfo.commandBufferCount =
+            1;
+
+        if (vkAllocateCommandBuffers(
+            m_LogicalDevice->GetHandle(),
+            &allocationInfo,
+            &commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to allocate environment cubemap command buffer."
+            );
+        }
+
+        VkCommandBufferBeginInfo beginInfo{};
+
+        beginInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        beginInfo.flags =
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        if (vkBeginCommandBuffer(
+            commandBuffer,
+            &beginInfo
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to begin environment cubemap command buffer."
+            );
+        }
+
+        /*
+         * RenderPass diagnostic test:
+         *
+         * Each framebuffer points to one cubemap face.
+         * Beginning the render pass clears that face to solid red.
+         * No graphics pipeline or draw command is used.
+         */
+for (uint32_t faceIndex = 0;
+    faceIndex < cubemapFaceCount;
+    ++faceIndex)
+{
+    const glm::mat4 captureView =
+        glm::lookAt(
+            capturePosition,
+            capturePosition +
+                faceDirections[faceIndex],
+            faceUpDirections[faceIndex]
+        );
+
+    const glm::mat4 viewProjection =
+        captureProjection *
+        captureView;
+
+    /*
+     * Clear to black.
+     *
+     * If the draw call works, the fixed-blue fragment shader
+     * should overwrite the black framebuffer.
+     */
+    VkClearValue clearValue{};
+
+    clearValue.color.float32[0] =
+        0.0f;
+
+    clearValue.color.float32[1] =
+        0.0f;
+
+    clearValue.color.float32[2] =
+        0.0f;
+
+    clearValue.color.float32[3] =
+        1.0f;
+
+    VkRenderPassBeginInfo renderPassBegin{};
+
+    renderPassBegin.sType =
+        VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+    renderPassBegin.renderPass =
+        m_EnvironmentRenderPass->GetHandle();
+
+    renderPassBegin.framebuffer =
+        m_EnvironmentFramebuffer->GetHandle(
+            faceIndex
+        );
+
+    renderPassBegin.renderArea.offset =
+    {
+        0,
+        0
+    };
+
+    renderPassBegin.renderArea.extent =
+    {
+        cubemapSize,
+        cubemapSize
+    };
+
+    renderPassBegin.clearValueCount =
+        1;
+
+    renderPassBegin.pClearValues =
+        &clearValue;
+
+    vkCmdBeginRenderPass(
+        commandBuffer,
+        &renderPassBegin,
+        VK_SUBPASS_CONTENTS_INLINE
+    );
+
+    /*
+     * Bind the HDR-to-cubemap graphics pipeline.
+     */
+    vkCmdBindPipeline(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_HDRToCubemapPipeline->GetPipeline()
+    );
+
+    const VkDescriptorSet descriptorSet =
+        m_HDRToCubemapDescriptorManager
+            ->GetDescriptorSet();
+
+    vkCmdBindDescriptorSets(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_HDRToCubemapPipeline->GetLayout(),
+        0,
+        1,
+        &descriptorSet,
+        0,
+        nullptr
+    );
+
+    /*
+     * Send this cubemap face's view-projection matrix
+     * to the vertex shader.
+     */
+    vkCmdPushConstants(
+        commandBuffer,
+        m_HDRToCubemapPipeline->GetLayout(),
+        VK_SHADER_STAGE_VERTEX_BIT,
+        0,
+        sizeof(glm::mat4),
+        &viewProjection
+    );
+
+    /*
+     * The cube vertices are generated with gl_VertexIndex,
+     * so no vertex buffer is bound.
+     */
+    vkCmdDraw(
+        commandBuffer,
+        36,
+        1,
+        0,
+        0
+    );
+
+    vkCmdEndRenderPass(
+        commandBuffer
+    );
+}
+
+        if (vkEndCommandBuffer(
+            commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to finish environment cubemap command buffer."
+            );
+        }
+
+        VkSubmitInfo submitInfo{};
+
+        submitInfo.sType =
+            VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        submitInfo.commandBufferCount =
+            1;
+
+        submitInfo.pCommandBuffers =
+            &commandBuffer;
+
+        if (vkQueueSubmit(
+            m_LogicalDevice->GetGraphicsQueue(),
+            1,
+            &submitInfo,
+            VK_NULL_HANDLE
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to submit environment cubemap commands."
+            );
+        }
+
+        if (vkQueueWaitIdle(
+            m_LogicalDevice->GetGraphicsQueue()
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed while waiting for environment cubemap test."
+            );
+        }
+
+        std::cout
+            << "[IBL] Environment cubemap render pass clear completed."
+            << std::endl;
+    }
+    catch (...)
+    {
+        if (commandBuffer != VK_NULL_HANDLE)
+        {
+            vkFreeCommandBuffers(
+                m_LogicalDevice->GetHandle(),
+                commandPool,
+                1,
+                &commandBuffer
+            );
+        }
+
+        vkDestroyCommandPool(
+            m_LogicalDevice->GetHandle(),
+            commandPool,
+            nullptr
+        );
+
+        throw;
+    }
+
+    vkFreeCommandBuffers(
+        m_LogicalDevice->GetHandle(),
+        commandPool,
+        1,
+        &commandBuffer
+    );
+
+    vkDestroyCommandPool(
+        m_LogicalDevice->GetHandle(),
+        commandPool,
+        nullptr
+    );
+}
+
+void VulkanContext::GeneratePrefilteredEnvironmentCubemap()
+{
+    constexpr uint32_t cubemapFaceCount =
+        6;
+
+    constexpr uint32_t baseCubemapSize =
+        128;
+
+    constexpr uint32_t mipLevelCount =
+        8;
+
+    if (!m_PhysicalDevice ||
+        !m_LogicalDevice ||
+        !m_EnvironmentRenderPass ||
+        !m_PrefilterFramebuffer ||
+        !m_PrefilterPipeline ||
+        !m_PrefilterDescriptorManager ||
+        !m_EnvironmentCubemap ||
+        !m_PrefilteredEnvironmentCubemap)
+    {
+        throw std::runtime_error(
+            "Cannot generate prefiltered environment cubemap because an IBL resource is missing."
+        );
+    }
+
+    std::cout
+        << "[IBL] Generating prefiltered environment cubemap..."
+        << std::endl;
+
+    // =========================================================
+    // Cubemap capture directions
+    // =========================================================
+
+    const std::array<glm::vec3, cubemapFaceCount>
+        faceDirections =
+    {
+        glm::vec3( 1.0f,  0.0f,  0.0f),
+        glm::vec3(-1.0f,  0.0f,  0.0f),
+        glm::vec3( 0.0f,  1.0f,  0.0f),
+        glm::vec3( 0.0f, -1.0f,  0.0f),
+        glm::vec3( 0.0f,  0.0f,  1.0f),
+        glm::vec3( 0.0f,  0.0f, -1.0f)
+    };
+
+    const std::array<glm::vec3, cubemapFaceCount>
+        faceUpDirections =
+    {
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f,  0.0f,  1.0f),
+        glm::vec3(0.0f,  0.0f, -1.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f)
+    };
+
+    glm::mat4 captureProjection =
+        glm::perspective(
+            glm::radians(90.0f),
+            1.0f,
+            0.1f,
+            10.0f
+        );
+
+    captureProjection[1][1] *=
+        -1.0f;
+
+    const glm::vec3 capturePosition =
+        glm::vec3(0.0f);
+
+    // =========================================================
+    // Create one-time command pool
+    // =========================================================
+
+    QueueFamilyIndices queueFamilyIndices =
+        m_PhysicalDevice->FindQueueFamilies();
+
+    if (!queueFamilyIndices.graphicsFamily.has_value())
+    {
+        throw std::runtime_error(
+            "Cannot generate prefiltered cubemap without a graphics queue family."
+        );
+    }
+
+    VkCommandPoolCreateInfo commandPoolInfo{};
+
+    commandPoolInfo.sType =
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+
+    commandPoolInfo.queueFamilyIndex =
+        queueFamilyIndices.graphicsFamily.value();
+
+    commandPoolInfo.flags =
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+
+    VkCommandPool commandPool =
+        VK_NULL_HANDLE;
+
+    if (vkCreateCommandPool(
+        m_LogicalDevice->GetHandle(),
+        &commandPoolInfo,
+        nullptr,
+        &commandPool
+    ) != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create prefilter command pool."
+        );
+    }
+
+    VkCommandBuffer commandBuffer =
+        VK_NULL_HANDLE;
+
+    try
+    {
+        // =====================================================
+        // Allocate command buffer
+        // =====================================================
+
+        VkCommandBufferAllocateInfo allocationInfo{};
+
+        allocationInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+
+        allocationInfo.commandPool =
+            commandPool;
+
+        allocationInfo.level =
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+        allocationInfo.commandBufferCount =
+            1;
+
+        if (vkAllocateCommandBuffers(
+            m_LogicalDevice->GetHandle(),
+            &allocationInfo,
+            &commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to allocate prefilter command buffer."
+            );
+        }
+
+        VkCommandBufferBeginInfo beginInfo{};
+
+        beginInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        beginInfo.flags =
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        if (vkBeginCommandBuffer(
+            commandBuffer,
+            &beginInfo
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to begin prefilter command buffer."
+            );
+        }
+
+        // =====================================================
+        // Bind pipeline and source cubemap descriptor
+        // =====================================================
+
+        vkCmdBindPipeline(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_PrefilterPipeline->GetPipeline()
+        );
+
+        const VkDescriptorSet descriptorSet =
+            m_PrefilterDescriptorManager
+                ->GetDescriptorSet();
+
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_PrefilterPipeline->GetLayout(),
+            0,
+            1,
+            &descriptorSet,
+            0,
+            nullptr
+        );
+
+        // =====================================================
+        // Render every mip and every face
+        // =====================================================
+
+        for (uint32_t mipLevel = 0;
+            mipLevel < mipLevelCount;
+            ++mipLevel)
+        {
+            const uint32_t mipSize =
+                std::max(
+                    1u,
+                    baseCubemapSize >>
+                    mipLevel
+                );
+
+            const float roughness =
+                static_cast<float>(mipLevel) /
+                static_cast<float>(
+                    mipLevelCount - 1
+                );
+
+            VkViewport viewport{};
+
+            viewport.x =
+                0.0f;
+
+            viewport.y =
+                0.0f;
+
+            viewport.width =
+                static_cast<float>(mipSize);
+
+            viewport.height =
+                static_cast<float>(mipSize);
+
+            viewport.minDepth =
+                0.0f;
+
+            viewport.maxDepth =
+                1.0f;
+
+            VkRect2D scissor{};
+
+            scissor.offset =
+            {
+                0,
+                0
+            };
+
+            scissor.extent =
+            {
+                mipSize,
+                mipSize
+            };
+
+            vkCmdSetViewport(
+                commandBuffer,
+                0,
+                1,
+                &viewport
+            );
+
+            vkCmdSetScissor(
+                commandBuffer,
+                0,
+                1,
+                &scissor
+            );
+
+            for (uint32_t faceIndex = 0;
+                faceIndex < cubemapFaceCount;
+                ++faceIndex)
+            {
+                const glm::mat4 captureView =
+                    glm::lookAt(
+                        capturePosition,
+                        capturePosition +
+                            faceDirections[faceIndex],
+                        faceUpDirections[faceIndex]
+                    );
+
+                PrefilterPushConstants pushConstants{};
+
+                pushConstants.viewProjection =
+                    captureProjection *
+                    captureView;
+
+                pushConstants.parameters =
+                    glm::vec4(
+                        roughness,
+                        0.0f,
+                        0.0f,
+                        0.0f
+                    );
+
+                VkClearValue clearValue{};
+
+                clearValue.color.float32[0] =
+                    0.0f;
+
+                clearValue.color.float32[1] =
+                    0.0f;
+
+                clearValue.color.float32[2] =
+                    0.0f;
+
+                clearValue.color.float32[3] =
+                    1.0f;
+
+                VkRenderPassBeginInfo renderPassBegin{};
+
+                renderPassBegin.sType =
+                    VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+                renderPassBegin.renderPass =
+                    m_EnvironmentRenderPass
+                        ->GetHandle();
+
+                renderPassBegin.framebuffer =
+                    m_PrefilterFramebuffer
+                        ->GetHandle(
+                            faceIndex,
+                            mipLevel
+                        );
+
+                renderPassBegin.renderArea.offset =
+                {
+                    0,
+                    0
+                };
+
+                renderPassBegin.renderArea.extent =
+                {
+                    mipSize,
+                    mipSize
+                };
+
+                renderPassBegin.clearValueCount =
+                    1;
+
+                renderPassBegin.pClearValues =
+                    &clearValue;
+
+                vkCmdBeginRenderPass(
+                    commandBuffer,
+                    &renderPassBegin,
+                    VK_SUBPASS_CONTENTS_INLINE
+                );
+
+                vkCmdPushConstants(
+                    commandBuffer,
+                    m_PrefilterPipeline->GetLayout(),
+                    VK_SHADER_STAGE_VERTEX_BIT |
+                    VK_SHADER_STAGE_FRAGMENT_BIT,
+                    0,
+                    sizeof(PrefilterPushConstants),
+                    &pushConstants
+                );
+
+                vkCmdDraw(
+                    commandBuffer,
+                    36,
+                    1,
+                    0,
+                    0
+                );
+
+                vkCmdEndRenderPass(
+                    commandBuffer
+                );
+            }
+
+            std::cout
+                << "[IBL] Prefilter mip "
+                << mipLevel
+                << " generated. Size: "
+                << mipSize
+                << " x "
+                << mipSize
+                << ", roughness: "
+                << roughness
+                << std::endl;
+        }
+
+        if (vkEndCommandBuffer(
+            commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to finish prefilter command buffer."
+            );
+        }
+
+        // =====================================================
+        // Submit and wait
+        // =====================================================
+
+        VkSubmitInfo submitInfo{};
+
+        submitInfo.sType =
+            VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        submitInfo.commandBufferCount =
+            1;
+
+        submitInfo.pCommandBuffers =
+            &commandBuffer;
+
+        if (vkQueueSubmit(
+            m_LogicalDevice->GetGraphicsQueue(),
+            1,
+            &submitInfo,
+            VK_NULL_HANDLE
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to submit prefilter commands."
+            );
+        }
+
+        if (vkQueueWaitIdle(
+            m_LogicalDevice->GetGraphicsQueue()
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed while waiting for prefilter generation."
+            );
+        }
+
+        std::cout
+            << "[IBL] Prefiltered environment cubemap generated successfully."
+            << std::endl;
+    }
+    catch (...)
+    {
+        if (commandBuffer != VK_NULL_HANDLE)
+        {
+            vkFreeCommandBuffers(
+                m_LogicalDevice->GetHandle(),
+                commandPool,
+                1,
+                &commandBuffer
+            );
+        }
+
+        vkDestroyCommandPool(
+            m_LogicalDevice->GetHandle(),
+            commandPool,
+            nullptr
+        );
+
+        throw;
+    }
+
+    vkFreeCommandBuffers(
+        m_LogicalDevice->GetHandle(),
+        commandPool,
+        1,
+        &commandBuffer
+    );
+
+    vkDestroyCommandPool(
+        m_LogicalDevice->GetHandle(),
+        commandPool,
+        nullptr
+    );
+}
+
+void VulkanContext::GenerateIrradianceCubemap()
+{
+    constexpr uint32_t cubemapFaceCount =
+        6;
+
+    constexpr uint32_t cubemapSize =
+        128;
+
+    if (!m_PhysicalDevice ||
+        !m_LogicalDevice ||
+        !m_IrradianceRenderPass ||
+        !m_IrradianceFramebuffer ||
+        !m_IrradiancePipeline ||
+        !m_IrradianceDescriptorManager ||
+        !m_EnvironmentCubemap ||
+        !m_IrradianceCubemap)
+    {
+        throw std::runtime_error(
+            "Cannot generate irradiance cubemap because an IBL resource is missing."
+        );
+    }
+
+    std::cout
+        << "[IBL] Generating irradiance cubemap..."
+        << std::endl;
+
+    // =========================================================
+    // Cubemap capture directions
+    // =========================================================
+
+    const std::array<glm::vec3, cubemapFaceCount>
+        faceDirections =
+    {
+        glm::vec3( 1.0f,  0.0f,  0.0f),
+        glm::vec3(-1.0f,  0.0f,  0.0f),
+        glm::vec3( 0.0f,  1.0f,  0.0f),
+        glm::vec3( 0.0f, -1.0f,  0.0f),
+        glm::vec3( 0.0f,  0.0f,  1.0f),
+        glm::vec3( 0.0f,  0.0f, -1.0f)
+    };
+
+    const std::array<glm::vec3, cubemapFaceCount>
+        faceUpDirections =
+    {
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f,  0.0f,  1.0f),
+        glm::vec3(0.0f,  0.0f, -1.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f),
+        glm::vec3(0.0f, -1.0f,  0.0f)
+    };
+
+    glm::mat4 captureProjection =
+        glm::perspective(
+            glm::radians(90.0f),
+            1.0f,
+            0.1f,
+            10.0f
+        );
+
+    captureProjection[1][1] *= -1.0f;
+
+    const glm::vec3 capturePosition =
+        glm::vec3(0.0f);
+
+    // =========================================================
+    // Create one-time command pool
+    // =========================================================
+
+    QueueFamilyIndices queueFamilyIndices =
+        m_PhysicalDevice->FindQueueFamilies();
+
+    if (!queueFamilyIndices.graphicsFamily.has_value())
+    {
+        throw std::runtime_error(
+            "Cannot generate irradiance cubemap without a graphics queue family."
+        );
+    }
+
+    VkCommandPoolCreateInfo commandPoolInfo{};
+
+    commandPoolInfo.sType =
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+
+    commandPoolInfo.queueFamilyIndex =
+        queueFamilyIndices.graphicsFamily.value();
+
+    commandPoolInfo.flags =
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+
+    VkCommandPool commandPool =
+        VK_NULL_HANDLE;
+
+    if (vkCreateCommandPool(
+        m_LogicalDevice->GetHandle(),
+        &commandPoolInfo,
+        nullptr,
+        &commandPool
+    ) != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create irradiance command pool."
+        );
+    }
+
+    VkCommandBuffer commandBuffer =
+        VK_NULL_HANDLE;
+
+    try
+    {
+        // =====================================================
+        // Allocate command buffer
+        // =====================================================
+
+        VkCommandBufferAllocateInfo allocationInfo{};
+
+        allocationInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+
+        allocationInfo.commandPool =
+            commandPool;
+
+        allocationInfo.level =
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+        allocationInfo.commandBufferCount =
+            1;
+
+        if (vkAllocateCommandBuffers(
+            m_LogicalDevice->GetHandle(),
+            &allocationInfo,
+            &commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to allocate irradiance command buffer."
+            );
+        }
+
+        VkCommandBufferBeginInfo beginInfo{};
+
+        beginInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        beginInfo.flags =
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        if (vkBeginCommandBuffer(
+            commandBuffer,
+            &beginInfo
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to begin irradiance command buffer."
+            );
+        }
+                // =====================================================
+        // Bind irradiance pipeline and source cubemap descriptor
+        // =====================================================
+
+        vkCmdBindPipeline(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_IrradiancePipeline->GetPipeline()
+        );
+
+        const VkDescriptorSet descriptorSet =
+    m_IrradianceDescriptorManager
+        ->GetDescriptorSet();
+
+for (uint32_t faceIndex = 0;
+     faceIndex < cubemapFaceCount;
+     ++faceIndex)
+{
+    VkRenderPassBeginInfo renderPassBeginInfo{};
+
+    renderPassBeginInfo.sType =
+        VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+    renderPassBeginInfo.renderPass =
+        m_IrradianceRenderPass->GetHandle();
+
+    renderPassBeginInfo.framebuffer =
+        m_IrradianceFramebuffer
+            ->GetHandle(faceIndex);
+
+    renderPassBeginInfo.renderArea.offset =
+    {
+        0,
+        0
+    };
+
+    renderPassBeginInfo.renderArea.extent =
+    {
+        cubemapSize,
+        cubemapSize
+    };
+
+    VkClearValue clearValue{};
+
+    clearValue.color =
+    {
+        {
+            1.0f,
+            0.0f,
+            1.0f,
+            1.0f
+        }
+    };
+
+    renderPassBeginInfo.clearValueCount =
+        1;
+
+    renderPassBeginInfo.pClearValues =
+        &clearValue;
+
+    vkCmdBeginRenderPass(
+        commandBuffer,
+        &renderPassBeginInfo,
+        VK_SUBPASS_CONTENTS_INLINE
+    );
+
+    vkCmdBindPipeline(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_IrradiancePipeline->GetPipeline()
+    );
+
+    vkCmdBindDescriptorSets(
+        commandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_IrradiancePipeline->GetLayout(),
+        0,
+        1,
+        &descriptorSet,
+        0,
+        nullptr
+    );
+
+    // Push face capture matrix here.
+
+    vkCmdDraw(
+        commandBuffer,
+        36,
+        1,
+        0,
+        0
+    );
+
+    vkCmdEndRenderPass(
+        commandBuffer
+    );
+
+            std::cout
+                << "[IBL] Irradiance cubemap face "
+                << faceIndex
+                << " generated."
+                << std::endl;
+        }
+                // =====================================================
+        // Finish command buffer recording
+        // =====================================================
+
+        if (vkEndCommandBuffer(
+            commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to finish irradiance command buffer."
+            );
+        }
+
+        // =====================================================
+        // Submit irradiance generation commands
+        // =====================================================
+
+        VkSubmitInfo submitInfo{};
+
+        submitInfo.sType =
+            VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        submitInfo.commandBufferCount =
+            1;
+
+        submitInfo.pCommandBuffers =
+            &commandBuffer;
+
+        if (vkQueueSubmit(
+            m_LogicalDevice->GetGraphicsQueue(),
+            1,
+            &submitInfo,
+            VK_NULL_HANDLE
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to submit irradiance generation commands."
+            );
+        }
+
+        if (vkQueueWaitIdle(
+            m_LogicalDevice->GetGraphicsQueue()
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed while waiting for irradiance cubemap generation."
+            );
+        }
+
+        std::cout
+            << "[IBL] Irradiance cubemap generated successfully. "
+            << "Resolution: "
+            << cubemapSize
+            << " x "
+            << cubemapSize
+            << ", Faces: "
+            << cubemapFaceCount
+            << "."
+            << std::endl;
+    }
+    catch (...)
+    {
+        if (commandBuffer != VK_NULL_HANDLE)
+        {
+            vkFreeCommandBuffers(
+                m_LogicalDevice->GetHandle(),
+                commandPool,
+                1,
+                &commandBuffer
+            );
+
+            commandBuffer =
+                VK_NULL_HANDLE;
+        }
+
+        if (commandPool != VK_NULL_HANDLE)
+        {
+            vkDestroyCommandPool(
+                m_LogicalDevice->GetHandle(),
+                commandPool,
+                nullptr
+            );
+
+            commandPool =
+                VK_NULL_HANDLE;
+        }
+
+        std::cerr
+            << "[IBL] Irradiance cubemap generation failed."
+            << std::endl;
+
+        throw;
+    }
+
+    // =========================================================
+    // Release temporary command resources
+    // =========================================================
+
+    if (commandBuffer != VK_NULL_HANDLE)
+    {
+        vkFreeCommandBuffers(
+            m_LogicalDevice->GetHandle(),
+            commandPool,
+            1,
+            &commandBuffer
+        );
+
+        commandBuffer =
+            VK_NULL_HANDLE;
+    }
+
+    if (commandPool != VK_NULL_HANDLE)
+    {
+        vkDestroyCommandPool(
+            m_LogicalDevice->GetHandle(),
+            commandPool,
+            nullptr
+        );
+
+        commandPool =
+            VK_NULL_HANDLE;
+    }
+
+    std::cout
+        << "[IBL] Irradiance generation command resources released."
+        << std::endl;
+}
+
 VulkanContext::~VulkanContext()
 {
     m_Renderer.reset();
@@ -1217,6 +2941,24 @@ VulkanContext::~VulkanContext()
     m_DescriptorSetLayout.reset();
 
     m_TextureImage.reset();
+    
+    m_HDRToCubemapDescriptorManager.reset();
+    m_PrefilterDescriptorManager.reset();
+
+    m_HDRToCubemapPipeline.reset();
+    m_PrefilterPipeline.reset();
+    
+    m_EnvironmentFramebuffer.reset();
+    m_PrefilterFramebuffer.reset();
+    m_EnvironmentRenderPass.reset();
+
+    m_BRDFLUTPipeline.reset();
+    m_BRDFLUTFramebuffer.reset();
+    m_BRDFLUTRenderPass.reset();
+    m_BRDFLUT.reset();
+
+    m_PrefilteredEnvironmentCubemap.reset();
+    m_EnvironmentCubemap.reset();
     m_HDRTextureImage.reset();
 
     m_IndexBuffer.reset();
@@ -1300,6 +3042,293 @@ void VulkanContext::CreateInstance()
     {
         throw std::runtime_error("Failed to create Vulkan instance.");
     }
+}
+
+void VulkanContext::GenerateBRDFLUT()
+{
+    constexpr uint32_t brdfLUTSize =
+        512;
+
+    std::cout
+        << "[IBL] Generating BRDF integration LUT..."
+        << std::endl;
+
+    QueueFamilyIndices queueFamilyIndices =
+        m_PhysicalDevice->FindQueueFamilies();
+
+    if (!queueFamilyIndices.graphicsFamily.has_value())
+    {
+        throw std::runtime_error(
+            "Cannot generate BRDF LUT without a graphics queue family."
+        );
+    }
+
+    // =========================================================
+    // Create temporary command pool
+    // =========================================================
+
+    VkCommandPoolCreateInfo commandPoolInfo{};
+
+    commandPoolInfo.sType =
+        VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+
+    commandPoolInfo.flags =
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+
+    commandPoolInfo.queueFamilyIndex =
+        queueFamilyIndices.graphicsFamily.value();
+
+    VkCommandPool commandPool =
+        VK_NULL_HANDLE;
+
+    if (vkCreateCommandPool(
+        m_LogicalDevice->GetHandle(),
+        &commandPoolInfo,
+        nullptr,
+        &commandPool
+    ) != VK_SUCCESS)
+    {
+        throw std::runtime_error(
+            "Failed to create BRDF LUT command pool."
+        );
+    }
+
+    VkCommandBuffer commandBuffer =
+        VK_NULL_HANDLE;
+
+    try
+    {
+        // =====================================================
+        // Allocate command buffer
+        // =====================================================
+
+        VkCommandBufferAllocateInfo
+            commandBufferAllocateInfo{};
+
+        commandBufferAllocateInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+
+        commandBufferAllocateInfo.commandPool =
+            commandPool;
+
+        commandBufferAllocateInfo.level =
+            VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+        commandBufferAllocateInfo.commandBufferCount =
+            1;
+
+        if (vkAllocateCommandBuffers(
+            m_LogicalDevice->GetHandle(),
+            &commandBufferAllocateInfo,
+            &commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to allocate BRDF LUT command buffer."
+            );
+        }
+
+        // =====================================================
+        // Begin one-time command buffer
+        // =====================================================
+
+        VkCommandBufferBeginInfo
+            commandBufferBeginInfo{};
+
+        commandBufferBeginInfo.sType =
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+        commandBufferBeginInfo.flags =
+            VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+        if (vkBeginCommandBuffer(
+            commandBuffer,
+            &commandBufferBeginInfo
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to begin BRDF LUT command buffer."
+            );
+        }
+
+        // =====================================================
+        // Begin BRDF LUT render pass
+        // =====================================================
+
+        VkClearValue clearValue{};
+
+        clearValue.color =
+        {
+            {
+                0.0f,
+                0.0f,
+                0.0f,
+                1.0f
+            }
+        };
+
+        VkRenderPassBeginInfo
+            renderPassBeginInfo{};
+
+        renderPassBeginInfo.sType =
+            VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+
+        renderPassBeginInfo.renderPass =
+            m_BRDFLUTRenderPass->GetHandle();
+
+        renderPassBeginInfo.framebuffer =
+            m_BRDFLUTFramebuffer->GetHandle();
+
+        renderPassBeginInfo.renderArea.offset =
+        {
+            0,
+            0
+        };
+
+        renderPassBeginInfo.renderArea.extent =
+        {
+            brdfLUTSize,
+            brdfLUTSize
+        };
+
+        renderPassBeginInfo.clearValueCount =
+            1;
+
+        renderPassBeginInfo.pClearValues =
+            &clearValue;
+
+        vkCmdBeginRenderPass(
+            commandBuffer,
+            &renderPassBeginInfo,
+            VK_SUBPASS_CONTENTS_INLINE
+        );
+
+        // =====================================================
+        // Bind BRDF LUT pipeline
+        // =====================================================
+
+        vkCmdBindPipeline(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_BRDFLUTPipeline->GetPipeline()
+        );
+
+        // =====================================================
+        // Draw full-screen triangle
+        //
+        // The vertex shader generates all positions using
+        // gl_VertexIndex, so no vertex buffer is required.
+        // =====================================================
+
+        vkCmdDraw(
+            commandBuffer,
+            3,
+            1,
+            0,
+            0
+        );
+
+        vkCmdEndRenderPass(
+            commandBuffer
+        );
+
+        // The BRDF LUT render pass automatically transitions:
+        //
+        // COLOR_ATTACHMENT_OPTIMAL
+        //              ↓
+        // SHADER_READ_ONLY_OPTIMAL
+
+        if (vkEndCommandBuffer(
+            commandBuffer
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to finish BRDF LUT command buffer."
+            );
+        }
+
+        // =====================================================
+        // Submit generation commands
+        // =====================================================
+
+        VkSubmitInfo submitInfo{};
+
+        submitInfo.sType =
+            VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        submitInfo.commandBufferCount =
+            1;
+
+        submitInfo.pCommandBuffers =
+            &commandBuffer;
+
+        if (vkQueueSubmit(
+            m_LogicalDevice->GetGraphicsQueue(),
+            1,
+            &submitInfo,
+            VK_NULL_HANDLE
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed to submit BRDF LUT generation commands."
+            );
+        }
+
+        if (vkQueueWaitIdle(
+            m_LogicalDevice->GetGraphicsQueue()
+        ) != VK_SUCCESS)
+        {
+            throw std::runtime_error(
+                "Failed while waiting for BRDF LUT generation."
+            );
+        }
+
+        vkFreeCommandBuffers(
+            m_LogicalDevice->GetHandle(),
+            commandPool,
+            1,
+            &commandBuffer
+        );
+
+        commandBuffer =
+            VK_NULL_HANDLE;
+
+        vkDestroyCommandPool(
+            m_LogicalDevice->GetHandle(),
+            commandPool,
+            nullptr
+        );
+
+        commandPool =
+            VK_NULL_HANDLE;
+    }
+    catch (...)
+    {
+        if (commandBuffer != VK_NULL_HANDLE)
+        {
+            vkFreeCommandBuffers(
+                m_LogicalDevice->GetHandle(),
+                commandPool,
+                1,
+                &commandBuffer
+            );
+        }
+
+        if (commandPool != VK_NULL_HANDLE)
+        {
+            vkDestroyCommandPool(
+                m_LogicalDevice->GetHandle(),
+                commandPool,
+                nullptr
+            );
+        }
+
+        throw;
+    }
+
+    std::cout
+        << "[IBL] BRDF integration LUT generated successfully."
+        << std::endl;
 }
 
 void VulkanContext::CreateShadowSampler()
@@ -1438,8 +3467,11 @@ void VulkanContext::UpdateUniformBuffer()
 
     ubo.shadowSettings = glm::ivec4(
         m_ShadowMode,
-        0,
-        0,
+        m_EnableEnvironmentLighting ? 1 : 0,
+
+        // Store exposure as an integer multiplied by 100.
+        static_cast<int>(m_Exposure * 100.0f),
+
         0
     );
 
@@ -1510,10 +3542,10 @@ void VulkanContext::UpdateUniformBuffer()
     ubo.pointLight.color =
         glm::vec4(
             1.0f,
-            0.35f,
-            0.15f,
+            0.82f,
+            0.68f,
             m_PointLightEnabled
-            ? 2.5f
+            ? 7.0f
             : 0.0f
         );
 
@@ -1567,6 +3599,38 @@ void VulkanContext::UpdateUniformBuffer()
         &ubo,
         sizeof(ubo)
     );
+}
+
+void VulkanContext::ToggleSkybox()
+{
+    m_EnableSkybox =
+        !m_EnableSkybox;
+
+    // For now, skybox visibility and environment lighting
+    // are controlled together as one rendering mode.
+    m_EnableEnvironmentLighting =
+        m_EnableSkybox;
+
+    if (m_CommandManager)
+    {
+        m_CommandManager->SetSkyboxEnabled(
+            m_EnableSkybox
+        );
+    }
+
+    std::cout
+        << "[Lighting] Skybox: "
+        << (m_EnableSkybox ? "ON" : "OFF")
+        << std::endl;
+
+    std::cout
+        << "[Lighting] Environment Lighting: "
+        << (
+            m_EnableEnvironmentLighting
+            ? "ON"
+            : "OFF"
+        )
+        << std::endl;
 }
 
 void VulkanContext::DrawFrame()

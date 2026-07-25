@@ -100,6 +100,29 @@ CommandManager::~CommandManager()
     }
 }
 
+void CommandManager::SetSkyboxEnabled(
+    bool enabled
+)
+{
+    if (m_SkyboxEnabled == enabled)
+    {
+        return;
+    }
+
+    vkDeviceWaitIdle(
+        m_LogicalDevice.GetHandle()
+    );
+
+    m_SkyboxEnabled = enabled;
+
+    RecordCommandBuffers();
+
+    std::cout
+        << "[Skybox] "
+        << (m_SkyboxEnabled ? "Enabled" : "Disabled")
+        << std::endl;
+}
+
 void CommandManager::CreateCommandPool()
 {
     QueueFamilyIndices queueFamilyIndices = m_PhysicalDevice.FindQueueFamilies();
@@ -182,9 +205,21 @@ void CommandManager::RecordCommandBuffers()
         m_Framebuffer.GetHandles();
 
     for (size_t i = 0;
-        i < m_CommandBuffers.size();
-        ++i)
+            i < m_CommandBuffers.size();
+            ++i)
+        {
+            VkResult resetResult =
+        vkResetCommandBuffer(
+            m_CommandBuffers[i],
+            0
+        );
+
+    if (resetResult != VK_SUCCESS)
     {
+        throw std::runtime_error(
+            "Failed to reset command buffer."
+        );
+    }
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType =
             VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -403,30 +438,33 @@ void CommandManager::RecordCommandBuffers()
         VkDescriptorSet descriptorSet =
             m_DescriptorManager.GetDescriptorSet();
 
-        vkCmdBindPipeline(
-            m_CommandBuffers[i],
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_SkyboxPipeline.GetPipeline()
-        );
+        if (m_SkyboxEnabled)
+        {
+            vkCmdBindPipeline(
+                m_CommandBuffers[i],
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_SkyboxPipeline.GetPipeline()
+            );
 
-        vkCmdBindDescriptorSets(
-            m_CommandBuffers[i],
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_SkyboxPipeline.GetLayout(),
-            0,
-            1,
-            &descriptorSet,
-            0,
-            nullptr
-        );
+            vkCmdBindDescriptorSets(
+                m_CommandBuffers[i],
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_SkyboxPipeline.GetLayout(),
+                0,
+                1,
+                &descriptorSet,
+                0,
+                nullptr
+            );
 
-         vkCmdDraw(
-             m_CommandBuffers[i],
-             36,
-             1,
-             0,
-             0
-         );
+            vkCmdDraw(
+                m_CommandBuffers[i],
+                36,
+                1,
+                0,
+                0
+            );
+        }
 
         // =====================================================
         // Main scene

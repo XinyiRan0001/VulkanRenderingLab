@@ -9,6 +9,10 @@ DescriptorManager::DescriptorManager(
     const Buffer& uniformBuffer,
     const TextureImage& textureImage,
     const TextureImage& hdrTextureImage,
+    const TextureImage& environmentCubemap,
+    const TextureImage& prefilteredEnvironmentCubemap,
+    const TextureImage& brdfLUT,
+    const TextureImage& irradianceCubemap,
     VkImageView shadowImageView,
     VkSampler shadowSampler
 )
@@ -17,12 +21,44 @@ DescriptorManager::DescriptorManager(
     m_UniformBuffer(uniformBuffer),
     m_TextureImage(textureImage),
     m_HDRTextureImage(hdrTextureImage),
+    m_EnvironmentCubemap(environmentCubemap),
+    m_PrefilteredEnvironmentCubemap(
+        prefilteredEnvironmentCubemap
+    ),
+    m_BRDFLUT(brdfLUT),
+    m_IrradianceCubemap(irradianceCubemap),
     m_ShadowImageView(shadowImageView),
     m_ShadowSampler(shadowSampler)
 {
+    std::cout
+        << "[Descriptor] Creating descriptor pool..."
+        << std::endl;
+
     CreateDescriptorPool();
+
+    std::cout
+        << "[Descriptor] Descriptor pool created."
+        << std::endl;
+
+    std::cout
+        << "[Descriptor] Allocating descriptor set..."
+        << std::endl;
+
     AllocateDescriptorSet();
+
+    std::cout
+        << "[Descriptor] Descriptor set allocated."
+        << std::endl;
+
+    std::cout
+        << "[Descriptor] Updating descriptor set..."
+        << std::endl;
+
     UpdateDescriptorSet();
+
+    std::cout
+        << "[Descriptor] Descriptor set updated."
+        << std::endl;
 
     std::cout
         << "DescriptorManager created successfully."
@@ -53,8 +89,8 @@ void DescriptorManager::CreateDescriptorPool()
     poolSizes[1].type =
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
-    // Diffuse texture + Shadow map
-    poolSizes[1].descriptorCount = 3;
+    // Diffuse, Shadow, HDR, Environment, Prefilter, BRDF LUT, Irradiance
+    poolSizes[1].descriptorCount = 7;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType =
@@ -100,6 +136,14 @@ void DescriptorManager::AllocateDescriptorSet()
 
 void DescriptorManager::UpdateDescriptorSet()
 {
+    std::cout
+        << "[Descriptor] UpdateDescriptorSet entered."
+        << std::endl;
+
+    std::cout
+        << "[Descriptor] Reading uniform buffer..."
+        << std::endl;
+
     VkDescriptorBufferInfo bufferInfo{};
 
     bufferInfo.buffer =
@@ -110,6 +154,11 @@ void DescriptorManager::UpdateDescriptorSet()
     bufferInfo.range =
         m_UniformBuffer.GetSize();
 
+    std::cout
+        << "[Descriptor] Uniform buffer ready."
+        << std::endl;
+
+    std::cout << "[Descriptor] Reading diffuse texture..." << std::endl;
     // binding 1: diffuse texture
     VkDescriptorImageInfo textureImageInfo{};
     textureImageInfo.imageLayout =
@@ -119,6 +168,7 @@ void DescriptorManager::UpdateDescriptorSet()
     textureImageInfo.sampler =
         m_TextureImage.GetSampler();
 
+    std::cout << "[Descriptor] Reading shadow map..." << std::endl;
     // binding 2: shadow map
     VkDescriptorImageInfo shadowImageInfo{};
     shadowImageInfo.imageLayout =
@@ -128,6 +178,7 @@ void DescriptorManager::UpdateDescriptorSet()
     shadowImageInfo.sampler =
         m_ShadowSampler;
 
+    std::cout << "[Descriptor] Reading HDR texture..." << std::endl;
     // binding 3: HDR environment
     VkDescriptorImageInfo hdrImageInfo{};
     hdrImageInfo.imageLayout =
@@ -137,7 +188,70 @@ void DescriptorManager::UpdateDescriptorSet()
     hdrImageInfo.sampler =
         m_HDRTextureImage.GetSampler();
 
-    std::array<VkWriteDescriptorSet, 4> descriptorWrites{};
+    std::cout << "[Descriptor] Generating environment cubemap..." << std::endl;   
+    // binding 4: Generated environment cubemap
+    VkDescriptorImageInfo environmentCubemapInfo{};
+
+    environmentCubemapInfo.imageLayout =
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    environmentCubemapInfo.imageView =
+        m_EnvironmentCubemap.GetImageView();
+
+    environmentCubemapInfo.sampler =
+        m_EnvironmentCubemap.GetSampler();  
+        
+    std::cout << "[Descriptor] Reading prefiltered cubemap..." << std::endl;    
+    // binding 5: Prefiltered environment cubemap
+    VkDescriptorImageInfo
+        prefilteredEnvironmentInfo{};
+
+    prefilteredEnvironmentInfo.imageLayout =
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    prefilteredEnvironmentInfo.imageView =
+        m_PrefilteredEnvironmentCubemap
+            .GetImageView();
+
+    prefilteredEnvironmentInfo.sampler =
+        m_PrefilteredEnvironmentCubemap
+            .GetSampler();
+
+    // binding 6: BRDF LUT
+    std::cout
+        << "[Descriptor] Reading BRDF LUT..."
+        << std::endl;
+    VkDescriptorImageInfo
+        brdfLUTInfo{};
+
+    brdfLUTInfo.imageLayout =
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    brdfLUTInfo.imageView =
+        m_BRDFLUT.GetImageView();
+    std::cout
+        << "[Descriptor] BRDF LUT image view acquired."
+        << std::endl;
+    brdfLUTInfo.sampler =
+    m_BRDFLUT.GetSampler();
+    std::cout
+        << "[Descriptor] BRDF LUT sampler acquired."
+        << std::endl;
+
+    // binding 7: IrradianceCubemap
+    VkDescriptorImageInfo
+    irradianceCubemapImageInfo{};
+
+    irradianceCubemapImageInfo.imageLayout =
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    irradianceCubemapImageInfo.imageView =
+        m_IrradianceCubemap.GetImageView();
+
+    irradianceCubemapImageInfo.sampler =
+        m_IrradianceCubemap.GetSampler();
+    
+    std::array<VkWriteDescriptorSet, 8> descriptorWrites{};
 
     // binding 0: uniform buffer
     descriptorWrites[0].sType =
@@ -191,6 +305,96 @@ void DescriptorManager::UpdateDescriptorSet()
     descriptorWrites[3].pImageInfo =
         &hdrImageInfo;
 
+    // binding 4: Generated environment cubemap
+    descriptorWrites[4].sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+
+    descriptorWrites[4].dstSet =
+        m_DescriptorSet;
+
+    descriptorWrites[4].dstBinding =
+        4;
+
+    descriptorWrites[4].dstArrayElement =
+        0;
+
+    descriptorWrites[4].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    descriptorWrites[4].descriptorCount =
+        1;
+
+    descriptorWrites[4].pImageInfo =
+        &environmentCubemapInfo;
+
+    // binding 5: Prefiltered environment cubemap
+    descriptorWrites[5].sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+
+    descriptorWrites[5].dstSet =
+        m_DescriptorSet;
+
+    descriptorWrites[5].dstBinding =
+        5;
+
+    descriptorWrites[5].dstArrayElement =
+        0;
+
+    descriptorWrites[5].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    descriptorWrites[5].descriptorCount =
+        1;
+
+    descriptorWrites[5].pImageInfo =
+        &prefilteredEnvironmentInfo;
+        
+
+    // binding 6: BRDF LUT
+
+    descriptorWrites[6].sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+
+    descriptorWrites[6].dstSet =
+        m_DescriptorSet;
+
+    descriptorWrites[6].dstBinding =
+        6;
+
+    descriptorWrites[6].dstArrayElement =
+        0;
+
+    descriptorWrites[6].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    descriptorWrites[6].descriptorCount =
+        1;
+
+    descriptorWrites[6].pImageInfo =
+        &brdfLUTInfo;
+
+    // binding 7: IrradianceCubemap
+    descriptorWrites[7].sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+
+    descriptorWrites[7].dstSet =
+        m_DescriptorSet;
+
+    descriptorWrites[7].dstBinding =
+        7;
+
+    descriptorWrites[7].dstArrayElement =
+        0;
+
+    descriptorWrites[7].descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    descriptorWrites[7].descriptorCount =
+        1;
+
+    descriptorWrites[7].pImageInfo =
+        &irradianceCubemapImageInfo;
+        
     vkUpdateDescriptorSets(
         m_LogicalDevice.GetHandle(),
         static_cast<uint32_t>(descriptorWrites.size()),

@@ -111,15 +111,105 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
     hdrBinding.pImmutableSamplers =
         nullptr;
 
+    // =========================================================
+    // binding 4: Generated environment cubemap
+    // =========================================================
+
+    VkDescriptorSetLayoutBinding environmentCubemapBinding{};
+
+    environmentCubemapBinding.binding = 4;
+
+    environmentCubemapBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    environmentCubemapBinding.descriptorCount = 1;
+
+    environmentCubemapBinding.stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    environmentCubemapBinding.pImmutableSamplers =
+        nullptr;
+
+    // =========================================================
+    // binding 5: Prefiltered environment cubemap
+    // =========================================================
+
+    VkDescriptorSetLayoutBinding
+        prefilteredEnvironmentBinding{};
+
+    prefilteredEnvironmentBinding.binding =
+        5;
+
+    prefilteredEnvironmentBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    prefilteredEnvironmentBinding.descriptorCount =
+        1;
+
+    prefilteredEnvironmentBinding.stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    prefilteredEnvironmentBinding.pImmutableSamplers =
+        nullptr;
+
+    // =========================================================
+    // binding 6: BRDF integration LUT
+    // =========================================================
+    VkDescriptorSetLayoutBinding
+        brdfLUTLayoutBinding{};
+
+    brdfLUTLayoutBinding.binding =
+        6;
+
+    brdfLUTLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    brdfLUTLayoutBinding.descriptorCount =
+        1;
+
+    brdfLUTLayoutBinding.stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    brdfLUTLayoutBinding.pImmutableSamplers =
+        nullptr;
+
+    // =========================================================
+    // binding 7: irradianceMap
+    // =========================================================
+    VkDescriptorSetLayoutBinding
+        irradianceCubemapLayoutBinding{};
+
+    irradianceCubemapLayoutBinding.binding =
+        7;
+
+    irradianceCubemapLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+
+    irradianceCubemapLayoutBinding.descriptorCount =
+        1;
+
+    irradianceCubemapLayoutBinding.stageFlags =
+        VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    irradianceCubemapLayoutBinding.pImmutableSamplers =
+        nullptr;
+    // =========================================================
+    // All descriptor bindings
+    // =========================================================
+
     const std::array<
         VkDescriptorSetLayoutBinding,
-        4
+        8
     > bindings =
     {
         uboBinding,
         diffuseBinding,
         shadowBinding,
-        hdrBinding
+        hdrBinding,
+        environmentCubemapBinding,
+        prefilteredEnvironmentBinding,
+        brdfLUTLayoutBinding,
+        irradianceCubemapLayoutBinding
     };
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

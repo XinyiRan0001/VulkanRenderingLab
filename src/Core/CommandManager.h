@@ -66,6 +66,8 @@ public:
         GpuTimingResult& result
     ) const;
 
+    void SetSkyboxEnabled(bool enabled);
+
 private:
     const LogicalDevice& m_LogicalDevice;
     const PhysicalDevice& m_PhysicalDevice;
@@ -90,6 +92,7 @@ private:
     float m_TimestampPeriod = 0.0f;
 
     std::vector<VkCommandBuffer> m_CommandBuffers;
+    bool m_SkyboxEnabled = true;
 
 private:
     void CreateCommandPool();
