@@ -149,7 +149,7 @@ It performs the following operations:
 
 1. Uses the light view-projection matrix
 2. Renders all scene submeshes
-3. Writes depth values into a 2048 ¡Ñ 2048 shadow depth image
+3. Writes depth values into a 2048 ï¿½ï¿½ 2048 shadow depth image
 4. Makes the resulting depth image available to the main camera pass
 
 The pass uses a dedicated:
@@ -398,9 +398,9 @@ The most meaningful comparison is therefore the Main Pass, where the filtering a
 
 | Shadow Mode | Main Pass | Relative Cost |
 |---|---:|---:|
-| Hard Shadow | 0.060 ms | 1.00¡Ñ |
-| PCF | 0.120 ms | 2.00¡Ñ |
-| PCSS (Optimized) | 0.231 ms | 3.85¡Ñ |
+| Hard Shadow | 0.060 ms | 1.00ï¿½ï¿½ |
+| PCF | 0.120 ms | 2.00ï¿½ï¿½ |
+| PCSS (Optimized) | 0.231 ms | 3.85ï¿½ï¿½ |
 
 PCF approximately doubled the measured Main Pass time compared with Hard Shadow.
 
@@ -559,3 +559,252 @@ PCF provides a practical balance between quality and cost.
 PCSS provides the most realistic result of the three techniques but requires substantially more shadow-map sampling.
 
 The runtime mode-switching and benchmark tools make these trade-offs directly observable within the application.
+
+### Physically Based Rendering and Image-Based Lighting
+
+- Cook-Torrance BRDF with metallic-roughness materials
+- HDR equirectangular environment loading
+- Runtime HDR-to-cubemap conversion
+- Diffuse irradiance convolution
+- GGX prefiltered environment cubemap with roughness mip levels
+- Split-sum BRDF integration LUT
+- Diffuse and specular image-based lighting
+- Tone-mapped HDR lighting composition
+- Material validation grid covering dielectric and metallic surfaces
+
+# Build and Run
+
+## Requirements
+
+- Windows 10/11
+- Visual Studio 2022
+- CMake
+- Vulkan SDK
+- A Vulkan-compatible GPU
+- Git
+
+The project has been developed and tested with an NVIDIA RTX 4050 Laptop GPU.
+
+## Clone the Repository
+
+```bash
+git clone https://github.com/XinyiRan0001/VulkanRenderingLab.git
+cd VulkanRenderingLab
+```
+
+## Configure
+
+```bash
+cmake -B build -S .
+```
+
+## Build
+
+Debug:
+
+```bash
+cmake --build build --config Debug
+```
+
+Release:
+
+```bash
+cmake --build build --config Release
+```
+
+## Run
+
+Debug:
+
+```bash
+.\build\Debug\VulkanRenderingLab.exe
+```
+
+Release:
+
+```bash
+.\build\Release\VulkanRenderingLab.exe
+```
+
+> **Note:** Run the executable from the project root directory so that shaders, models, textures, and HDR assets can be loaded correctly.
+
+---
+
+# Controls
+
+## Camera
+
+| Input | Action |
+|--------|--------|
+| Left Mouse Drag | Orbit camera |
+| Mouse Wheel | Zoom |
+| `R` | Reset camera |
+| `Esc` | Exit application |
+
+Default camera after reset:
+
+```text
+Yaw      : 0.0
+Pitch    : 0.15
+Distance : 3.5
+```
+
+---
+
+## Shadow Modes
+
+| Key | Mode |
+|-----|------|
+| `1` | Hard Shadows |
+| `2` | Percentage-Closer Filtering (PCF) |
+| `3` | Percentage-Closer Soft Shadows (PCSS) |
+| `4` | Shadow Map Debug View |
+
+Example:
+
+```text
+[Shadow] Mode: PCSS
+```
+
+---
+
+## HDR & Skybox
+
+| Key | Action |
+|-----|--------|
+| `H` | Toggle Skybox |
+| `F5` | Decrease HDR Exposure |
+| `F6` | Increase HDR Exposure |
+
+Exposure is adjusted in increments of **0.1** and clamped between:
+
+```text
+0.1 ~ 5.0
+```
+
+Console output:
+
+```text
+[HDR] Exposure: 1.30
+```
+
+---
+
+## Point Light
+
+### Toggle
+
+| Key | Action |
+|-----|--------|
+| `P` | Enable / Disable Point Light |
+| `Space` | Pause / Resume Animation |
+| `M` | Toggle Manual Control |
+
+Console example:
+
+```text
+[Point Light] Enabled
+[Point Light Animation] Paused
+[Point Light] Control Mode: Manual
+```
+
+---
+
+### Manual Control
+
+When **Manual Control** is enabled (`M`):
+
+| Key | Movement |
+|-----|----------|
+| `J` | Move Left (-X) |
+| `L` | Move Right (+X) |
+| `I` | Move Forward (-Z) |
+| `K` | Move Backward (+Z) |
+| `U` | Move Up (+Y) |
+| `O` | Move Down (-Y) |
+
+Each key press moves the light by approximately **0.15 world units**.
+
+---
+
+# GPU Benchmark
+
+Press:
+
+```text
+B
+```
+
+to benchmark the currently selected shadow mode.
+
+Example workflow:
+
+```text
+3
+â†“
+B
+```
+
+Console output:
+
+```text
+========== GPU BENCHMARK ==========
+Mode: PCSS
+Shadow Pass: 0.164 ms
+Main Pass:   0.231 ms
+Total:       0.396 ms
+Samples:     1392
+===================================
+```
+
+Recommended benchmarking sequence:
+
+1. Press `1` then `B` (Hard Shadows)
+2. Press `2` then `B` (PCF)
+3. Press `3` then `B` (PCSS)
+
+This allows direct comparison of rendering quality and GPU cost.
+
+---
+
+# Demonstration Guide
+
+A recommended order for demonstrating the renderer:
+
+1. Rotate the camera around the scene.
+2. Toggle the HDR skybox (`H`).
+3. Adjust HDR exposure (`F5` / `F6`).
+4. Compare Hard Shadows, PCF, and PCSS (`1`, `2`, `3`).
+5. Display the Shadow Map Debug View (`4`).
+6. Enable or disable the point light (`P`).
+7. Pause the point light animation (`Space`).
+8. Switch to Manual Control (`M`) and move the light (`J`, `L`, `I`, `K`, `U`, `O`).
+9. Benchmark each shadow mode (`B`).
+
+---
+
+# Keyboard Shortcuts
+
+| Category | Key | Function |
+|----------|-----|----------|
+| Camera | Left Mouse Drag | Orbit camera |
+| Camera | Mouse Wheel | Zoom |
+| Camera | `R` | Reset camera |
+| Camera | `Esc` | Exit |
+| Shadows | `1` | Hard Shadows |
+| Shadows | `2` | PCF |
+| Shadows | `3` | PCSS |
+| Shadows | `4` | Shadow Map Debug |
+| HDR | `H` | Toggle Skybox |
+| HDR | `F5` | Exposure - |
+| HDR | `F6` | Exposure + |
+| Point Light | `P` | Enable / Disable |
+| Point Light | `Space` | Pause / Resume Animation |
+| Point Light | `M` | Manual / Orbit Mode |
+| Point Light | `J` | Move Left |
+| Point Light | `L` | Move Right |
+| Point Light | `I` | Move Forward |
+| Point Light | `K` | Move Backward |
+| Point Light | `U` | Move Up |
+| Point Light | `O` | Move Down |
+| Benchmark | `B` | Start GPU Benchmark |
