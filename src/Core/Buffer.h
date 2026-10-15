@@ -23,6 +23,7 @@ public:
     VkBuffer GetHandle() const { return m_Buffer; }
     VkDeviceSize GetSize() const { return m_Size; }
 
+    void DownloadData(void* data, VkDeviceSize size) const;
     void UploadData(const void* data, VkDeviceSize size);
 
 private:

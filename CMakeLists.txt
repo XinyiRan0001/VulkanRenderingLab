@@ -13,6 +13,7 @@ find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 
 add_executable(VulkanRenderingLab
     src/main.cpp
+    src/Core/GLTFLoader.cpp
 
     src/Core/Window.h
     src/Core/Window.cpp
@@ -125,3 +126,32 @@ target_include_directories(VulkanRenderingLab
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${STB_INCLUDE_DIRS}
 )
+# Pin cgltf v1.15 in-tree; shaders are rebuilt whenever their source changes.
+target_include_directories(VulkanRenderingLab PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf)
+if(NOT Vulkan_GLSLC_EXECUTABLE)
+    message(FATAL_ERROR "glslc is required to compile renderer shaders")
+endif()
+file(GLOB RENDERER_SHADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag")
+set(SHADER_OUTPUTS)
+foreach(SHADER IN LISTS RENDERER_SHADERS)
+    get_filename_component(SHADER_NAME "${SHADER}" NAME)
+    set(SPIRV "${CMAKE_CURRENT_BINARY_DIR}/shaders/${SHADER_NAME}.spv")
+    add_custom_command(OUTPUT "${SPIRV}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+        COMMAND "${Vulkan_GLSLC_EXECUTABLE}" "${SHADER}" -o "${SPIRV}"
+        DEPENDS "${SHADER}" VERBATIM)
+    list(APPEND SHADER_OUTPUTS "${SPIRV}")
+endforeach()
+add_custom_target(RendererShaders DEPENDS ${SHADER_OUTPUTS})
+add_dependencies(VulkanRenderingLab RendererShaders)
+
+if(MSVC)
+    target_compile_options(VulkanRenderingLab PRIVATE /utf-8)
+endif()
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(GLTFLoaderTests tests/GLTFLoaderTests.cpp src/Core/GLTFLoader.cpp src/Core/TextureData.cpp)
+    target_include_directories(GLTFLoaderTests PRIVATE src/Core third_party/cgltf ${STB_INCLUDE_DIRS})
+    target_link_libraries(GLTFLoaderTests PRIVATE Vulkan::Vulkan glfw glm::glm)
+    add_test(NAME GLTFLoaderTests COMMAND GLTFLoaderTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/gltf-validation")
+endif()

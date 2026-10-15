@@ -57,6 +57,12 @@ void Renderer::CreateSyncObjects()
     }
 }
 
+void Renderer::WaitForFrame() const
+{
+    if (vkWaitForFences(m_LogicalDevice.GetHandle(), 1, &m_InFlightFence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+        throw std::runtime_error("Failed waiting for the frame before updating uniforms.");
+}
+
 void Renderer::DrawFrame()
 {
     std::cout << "[DrawFrame] Begin" << std::endl;
@@ -361,6 +367,11 @@ void Renderer::DrawFrame()
     }
 
     m_HasSubmittedFrame = true;
+    if (!m_CapturePath.empty()) {
+        WaitForFrame();
+        m_CommandManager.CaptureFrame(imageIndex, m_CapturePath);
+        m_CapturePath.clear();
+    }
 
     VkSwapchainKHR swapchains[] =
     {

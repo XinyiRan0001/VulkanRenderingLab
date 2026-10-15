@@ -19,6 +19,7 @@
 #include "IrradianceDescriptorManager.h"
 
 #include <vector>
+#include <string>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <memory>
@@ -46,7 +47,7 @@ class SkyboxPipeline;
 class VulkanContext
 {
 public:
-    explicit VulkanContext(Window& window);
+    explicit VulkanContext(Window& window, const std::string& scenePath = "");
     ~VulkanContext();
     void UpdateUniformBuffer();
     VulkanContext(const VulkanContext&) = delete;
@@ -56,9 +57,13 @@ public:
     void DrawFrame();
     void UpdateWindowTitle(double deltaTime);
     void ToggleSkybox();
+    void ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, float pitchDegrees, bool paused);
+    void CaptureNextFrame(const std::string& path);
+    void SetInspection(int materialView, int lightingView, float environmentDegrees);
 
 private:
     Window& m_Window;
+    bool m_IsGltfScene = false;
 
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
@@ -82,6 +87,7 @@ private:
     std::unique_ptr<Buffer> m_IndexBuffer;
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<TextureImage> m_TextureImage;
+    std::vector<std::unique_ptr<TextureImage>> m_MaterialImages;
     std::unique_ptr<TextureImage> m_HDRTextureImage;
     std::unique_ptr<HDRToCubemapPipeline>
         m_HDRToCubemapPipeline;
@@ -129,6 +135,10 @@ private:
     std::unique_ptr<ShadowPipeline> m_ShadowPipeline;
     std::unique_ptr<SkyboxPipeline> m_SkyboxPipeline;
 
+    glm::vec3 m_CameraTarget{0.0f, 0.8f, 0.0f};
+    int m_MaterialView = 0;
+    int m_LightingView = 0;
+    float m_EnvironmentRotation = 0.0f;
     float m_CameraYaw = 0.0f;
     float m_CameraPitch = 0.15f;
     float m_CameraDistance = 3.5f;

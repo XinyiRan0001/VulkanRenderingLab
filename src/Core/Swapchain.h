@@ -22,6 +22,8 @@ public:
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
+    VkImage GetImage(uint32_t index) const { return m_Images.at(index); }
+    bool SupportsCapture() const { return m_SupportsCapture; }
     VkFormat GetImageFormat() const { return m_ImageFormat; }
     VkExtent2D GetExtent() const { return m_Extent; }
     VkSwapchainKHR GetHandle() const { return m_Swapchain; }
@@ -39,6 +41,7 @@ private:
     std::vector<VkImage> m_Images;
     std::vector<VkImageView> m_ImageViews;
 
+    bool m_SupportsCapture = false;
     VkFormat m_ImageFormat{};
     VkExtent2D m_Extent{};
 

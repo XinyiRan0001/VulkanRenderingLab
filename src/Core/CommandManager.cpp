@@ -1,3 +1,5 @@
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 #include "CommandManager.h"
 #include "DescriptorManager.h"
 #include "GraphicsPipeline.h"
@@ -514,6 +516,9 @@ void CommandManager::RecordCommandBuffers()
 
         for (const SubMesh& subMesh : m_SubMeshes)
         {
+            VkDescriptorSet materialSet = m_DescriptorManager.GetDescriptorSet(subMesh.materialId);
+            vkCmdBindDescriptorSets(m_CommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_GraphicsPipeline.GetLayout(), 0, 1, &materialSet, 0, nullptr);
             MaterialPushConstants materialPushConstants{};
 
             if (subMesh.materialId >= 0 &&
@@ -525,6 +530,11 @@ void CommandManager::RecordCommandBuffers()
                 materialPushConstants.flags.x =
                     material.hasDiffuseTexture ? 1 : 0;
 
+                materialPushConstants.flags.y = 0;
+                for (int slot = 1; slot < 5; ++slot)
+                    if (material.textures[slot] >= 0) materialPushConstants.flags.y |= (1 << (slot-1));
+                materialPushConstants.emissive = glm::vec4(material.emissive, 0.0f);
+                materialPushConstants.textureSettings = glm::vec4(material.normalScale, material.occlusionStrength, 0, 0);
                 materialPushConstants.baseColor =
                     glm::vec4(
                         material.diffuseColor[0],
@@ -675,4 +685,49 @@ bool CommandManager::GetGpuTimingResult(
         nanosecondsToMilliseconds;
 
     return true;
+}
+// Diagnostic readback only: caller waits for the render fence and has not presented yet.
+void CommandManager::CaptureFrame(uint32_t imageIndex, const std::string& path) const {
+    if (!m_Swapchain.SupportsCapture()) throw std::runtime_error("Surface does not support readback");
+    const auto format = m_Swapchain.GetImageFormat();
+    const bool bgra = format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_B8G8R8A8_UNORM;
+    if (!bgra && format != VK_FORMAT_R8G8B8A8_SRGB && format != VK_FORMAT_R8G8B8A8_UNORM)
+        throw std::runtime_error("Unsupported screenshot pixel format");
+    const auto extent = m_Swapchain.GetExtent();
+    Buffer readback(m_PhysicalDevice, m_LogicalDevice, VkDeviceSize(extent.width) * extent.height * 4,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    alloc.commandPool = m_CommandPool; alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; alloc.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    if (vkAllocateCommandBuffers(m_LogicalDevice.GetHandle(), &alloc, &cmd) != VK_SUCCESS) throw std::runtime_error("Capture command allocation failed");
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    barrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = m_Swapchain.GetImage(imageIndex);
+    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {extent.width,extent.height,1};
+    vkCmdCopyImageToBuffer(cmd, barrier.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.GetHandle(), 1, &copy);
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT; barrier.dstAccessMask = 0;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferMemoryBarrier host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+    host.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; host.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    host.srcQueueFamilyIndex = host.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    host.buffer = readback.GetHandle(); host.size = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &host, 0, nullptr);
+    vkEndCommandBuffer(cmd);
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO}; submit.commandBufferCount = 1; submit.pCommandBuffers = &cmd;
+    const auto queue = m_LogicalDevice.GetGraphicsQueue();
+    if (vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS || vkQueueWaitIdle(queue) != VK_SUCCESS)
+        throw std::runtime_error("Capture submission failed");
+    std::vector<unsigned char> pixels(size_t(extent.width)*extent.height*4);
+    readback.DownloadData(pixels.data(), pixels.size());
+    if (bgra) for (size_t i=0; i<pixels.size(); i+=4) std::swap(pixels[i],pixels[i+2]);
+    vkFreeCommandBuffers(m_LogicalDevice.GetHandle(), m_CommandPool, 1, &cmd);
+    if (!stbi_write_png(path.c_str(), extent.width, extent.height, 4, pixels.data(), extent.width*4)) throw std::runtime_error("Cannot write screenshot");
+    std::cout << "[Capture] " << path << std::endl;
 }

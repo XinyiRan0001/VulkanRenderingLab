@@ -7,6 +7,15 @@ layout(location = 0) out vec4 outColor;
 // Equirectangular HDR environment texture.
 layout(binding = 3) uniform sampler2D hdrEnvironment;
 
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform UniformBufferObject {
+    mat4 model; mat4 view; mat4 proj; mat4 lightViewProj;
+    ivec4 shadowSettings;
+    PointLight pointLight;
+    vec4 cameraPosition;
+    vec4 lightingSettings;
+} ubo;
+
 const float PI = 3.14159265359;
 
 vec2 DirectionToEquirectangularUV(vec3 direction)
@@ -43,20 +52,12 @@ vec2 DirectionToEquirectangularUV(vec3 direction)
     return uv;
 }
 
-vec3 ToneMapACES(vec3 color)
+vec3 RotateEnvironment(vec3 direction)
 {
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-
-    return clamp(
-        (color * (a * color + b)) /
-        (color * (c * color + d) + e),
-        0.0,
-        1.0
-    );
+    float angle = ubo.lightingSettings.x;
+    float c = cos(angle), s = sin(angle);
+    return vec3(c * direction.x + s * direction.z, direction.y,
+                -s * direction.x + c * direction.z);
 }
 
 void main()
@@ -66,7 +67,7 @@ void main()
 
     vec2 uv =
         DirectionToEquirectangularUV(
-            direction
+            RotateEnvironment(direction)
         );
 
     vec3 hdrColor =
@@ -75,18 +76,9 @@ void main()
             uv
         ).rgb;
 
-    // Temporary fixed exposure.
-    // Later this can be passed from the UBO.
-    const float exposure =
-        1.0;
-
-    hdrColor *=
-        exposure;
-
-    vec3 mappedColor =
-        ToneMapACES(
-            hdrColor
-        );
+    float exposure = max(float(ubo.shadowSettings.z) / 100.0, 0.01);
+    // Match the main pass so background and reflected radiance respond together.
+    vec3 mappedColor = vec3(1.0) - exp(-hdrColor * exposure);
 
     // Do not apply manual gamma correction here.
     // The swapchain format is VK_FORMAT_B8G8R8A8_SRGB.

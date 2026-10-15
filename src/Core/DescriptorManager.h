@@ -4,6 +4,8 @@
 #include <GLFW/glfw3.h>
 
 #include "LogicalDevice.h"
+#include <array>
+#include <vector>
 #include "Buffer.h"
 #include "GraphicsPipeline.h"
 #include "TextureImage.h"
@@ -25,7 +27,8 @@ public:
     const TextureImage& brdfLUT,
     const TextureImage& irradianceCubemap,
     VkImageView shadowImageView,
-    VkSampler shadowSampler
+    VkSampler shadowSampler,
+    const std::vector<std::array<const TextureImage*, 5>>& materialTextures
 );
 
     ~DescriptorManager();
@@ -33,7 +36,9 @@ public:
     DescriptorManager(const DescriptorManager&) = delete;
     DescriptorManager& operator=(const DescriptorManager&) = delete;
 
-    VkDescriptorSet GetDescriptorSet() const { return m_DescriptorSet; }
+    VkDescriptorSet GetDescriptorSet(int material = -1) const {
+        return material >= 0 && size_t(material) < m_MaterialSets.size() ? m_MaterialSets[material] : m_DescriptorSet;
+    }
 
 
 private:
@@ -49,6 +54,8 @@ private:
         m_BRDFLUT;
     const TextureImage&
         m_IrradianceCubemap;
+    std::vector<std::array<const TextureImage*, 5>> m_MaterialTextures;
+    std::vector<VkDescriptorSet> m_MaterialSets;
     VkDescriptorPool m_DescriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet m_DescriptorSet = VK_NULL_HANDLE;
     VkImageView m_ShadowImageView = VK_NULL_HANDLE;

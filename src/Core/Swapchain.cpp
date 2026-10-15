@@ -65,7 +65,9 @@ void Swapchain::CreateSwapchain()
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    m_SupportsCapture = (support.capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        (m_SupportsCapture ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
 
     if (indices.graphicsFamily != indices.presentFamily)
     {

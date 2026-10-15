@@ -14,7 +14,8 @@ DescriptorManager::DescriptorManager(
     const TextureImage& brdfLUT,
     const TextureImage& irradianceCubemap,
     VkImageView shadowImageView,
-    VkSampler shadowSampler
+    VkSampler shadowSampler,
+    const std::vector<std::array<const TextureImage*, 5>>& materialTextures
 )
     : m_LogicalDevice(logicalDevice),
     m_GraphicsPipeline(graphicsPipeline),
@@ -34,6 +35,7 @@ DescriptorManager::DescriptorManager(
         << "[Descriptor] Creating descriptor pool..."
         << std::endl;
 
+    m_MaterialTextures = materialTextures;
     CreateDescriptorPool();
 
     std::cout
@@ -84,13 +86,13 @@ void DescriptorManager::CreateDescriptorPool()
     poolSizes[0].type =
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 
-    poolSizes[0].descriptorCount = 1;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(m_MaterialTextures.size() + 1);
 
     poolSizes[1].type =
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
     // Diffuse, Shadow, HDR, Environment, Prefilter, BRDF LUT, Irradiance
-    poolSizes[1].descriptorCount = 7;
+    poolSizes[1].descriptorCount = 11 * static_cast<uint32_t>(m_MaterialTextures.size() + 1);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType =
@@ -100,7 +102,7 @@ void DescriptorManager::CreateDescriptorPool()
         static_cast<uint32_t>(poolSizes.size());
 
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = 1;
+    poolInfo.maxSets = static_cast<uint32_t>(m_MaterialTextures.size() + 1);
 
     if (vkCreateDescriptorPool(
         m_LogicalDevice.GetHandle(),
@@ -122,16 +124,20 @@ void DescriptorManager::AllocateDescriptorSet()
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.descriptorPool = m_DescriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &layout;
+    std::vector<VkDescriptorSetLayout> layouts(m_MaterialTextures.size() + 1, layout);
+    std::vector<VkDescriptorSet> sets(layouts.size());
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
+    allocInfo.pSetLayouts = layouts.data();
 
     if (vkAllocateDescriptorSets(
         m_LogicalDevice.GetHandle(),
         &allocInfo,
-        &m_DescriptorSet) != VK_SUCCESS)
+        sets.data()) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to allocate descriptor set.");
     }
+    m_DescriptorSet = sets.back();
+    m_MaterialSets.assign(sets.begin(), sets.end() - 1);
 }
 
 void DescriptorManager::UpdateDescriptorSet()
@@ -251,7 +257,7 @@ void DescriptorManager::UpdateDescriptorSet()
     irradianceCubemapImageInfo.sampler =
         m_IrradianceCubemap.GetSampler();
     
-    std::array<VkWriteDescriptorSet, 8> descriptorWrites{};
+    std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
 
     // binding 0: uniform buffer
     descriptorWrites[0].sType =
@@ -395,6 +401,25 @@ void DescriptorManager::UpdateDescriptorSet()
     descriptorWrites[7].pImageInfo =
         &irradianceCubemapImageInfo;
         
+    const VkDescriptorSet globalSet = m_DescriptorSet;
+    for (size_t setIndex = 0; setIndex <= m_MaterialSets.size(); ++setIndex) {
+        const bool isMaterial = setIndex < m_MaterialSets.size();
+        const VkDescriptorSet target = isMaterial ? m_MaterialSets[setIndex] : globalSet;
+        std::array<VkDescriptorImageInfo, 5> materialInfos{};
+        for (size_t slot = 0; slot < 5; ++slot) {
+            const auto* texture = isMaterial ? m_MaterialTextures[setIndex][slot] : &m_TextureImage;
+            materialInfos[slot] = {texture->GetSampler(), texture->GetImageView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        }
+        for (auto& write : descriptorWrites) write.dstSet = target;
+        descriptorWrites[1].pImageInfo = &materialInfos[0];
+        for (uint32_t slot = 1; slot < 5; ++slot) {
+            auto& write = descriptorWrites[7 + slot];
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstBinding = 7 + slot;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.descriptorCount = 1;
+            write.pImageInfo = &materialInfos[slot];
+        }
     vkUpdateDescriptorSets(
         m_LogicalDevice.GetHandle(),
         static_cast<uint32_t>(descriptorWrites.size()),
@@ -402,4 +427,5 @@ void DescriptorManager::UpdateDescriptorSet()
         0,
         nullptr
     );
+    }
 }

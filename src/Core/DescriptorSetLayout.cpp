@@ -199,7 +199,7 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
 
     const std::array<
         VkDescriptorSetLayoutBinding,
-        8
+        12
     > bindings =
     {
         uboBinding,
@@ -209,7 +209,11 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
         environmentCubemapBinding,
         prefilteredEnvironmentBinding,
         brdfLUTLayoutBinding,
-        irradianceCubemapLayoutBinding
+        irradianceCubemapLayoutBinding,
+        {8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+        {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
     };
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

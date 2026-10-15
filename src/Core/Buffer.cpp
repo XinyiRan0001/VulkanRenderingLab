@@ -103,3 +103,11 @@ void Buffer::UploadData(const void* data, VkDeviceSize size)
         m_Memory
     );
 }
+void Buffer::DownloadData(void* data, VkDeviceSize size) const {
+    if (size > m_Size) throw std::runtime_error("Readback exceeds buffer size");
+    void* mapped = nullptr;
+    if (vkMapMemory(m_LogicalDevice.GetHandle(), m_Memory, 0, size, 0, &mapped) != VK_SUCCESS)
+        throw std::runtime_error("Cannot map readback buffer");
+    std::memcpy(data, mapped, static_cast<size_t>(size));
+    vkUnmapMemory(m_LogicalDevice.GetHandle(), m_Memory);
+}

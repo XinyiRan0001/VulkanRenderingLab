@@ -18,6 +18,7 @@ layout(binding = 0) uniform UniformBufferObject
     PointLight pointLight;
 
     vec4 cameraPosition;
+    vec4 lightingSettings;
 } ubo;
 
 layout(binding = 1) uniform sampler2D texSampler;
@@ -38,6 +39,8 @@ layout(push_constant) uniform MaterialPushConstant
 
     vec4 baseColor;
 
+    vec4 emissive;
+    vec4 textureSettings;
     vec4 properties;
 } material;
 
@@ -48,6 +51,11 @@ layout(location = 3) in vec3 fragWorldPosition;
 layout(location = 4) in vec4 fragLightSpacePosition;
 layout(location = 5) flat in int fragShadowMode;
 
+layout(location = 6) in vec4 fragTangent;
+layout(binding = 8) uniform sampler2D normalMap;
+layout(binding = 9) uniform sampler2D metallicRoughnessMap;
+layout(binding = 10) uniform sampler2D occlusionMap;
+layout(binding = 11) uniform sampler2D emissiveMap;
 layout(location = 0) out vec4 outColor;
 
 
@@ -69,6 +77,31 @@ float LinearizeShadowDepth(float depth)
 }
 
 
+// Depth changes over the receiver's local plane in shadow UV space.
+// Evaluate derivatives before the shadow-frustum early return below.
+vec2 ReceiverDepthGradient(vec3 projected)
+{
+    vec3 dx = dFdx(projected);
+    vec3 dy = dFdy(projected);
+    float determinant = dx.x * dy.y - dx.y * dy.x;
+    float scale = max(length(dx.xy) * length(dy.xy), 1e-20);
+    if (abs(determinant) <= 1e-6 * scale) return vec2(0.0);
+    return vec2(dy.y * dx.z - dx.y * dy.z,
+                dx.x * dy.z - dy.x * dx.z) / determinant;
+}
+
+// PCSS compares actual stored depths, not linearly interpolated depth values.
+// Use the texel center for the receiver-plane correction as well.
+float ReadPCSSDepth(vec2 requestedUV, out vec2 sampleUV)
+{
+    ivec2 size = textureSize(shadowMap, 0);
+    ivec2 pixel = ivec2(floor(requestedUV * vec2(size)));
+    sampleUV = (vec2(pixel) + 0.5) / vec2(size);
+    if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size)))
+        return 1.0;
+    return texelFetch(shadowMap, pixel, 0).r;
+}
+
 // =============================================================
 // PCSS blocker search
 // =============================================================
@@ -77,6 +110,7 @@ float FindBlocker(
     vec2 uv,
     float receiverDepth,
     float bias,
+    vec2 depthGradient,
     out int blockerCount
 )
 {
@@ -101,19 +135,17 @@ float FindBlocker(
                 searchRadius /
                 2.0;
 
-            float sampleDepth =
-                texture(
-                    shadowMap,
-                    sampleUV
-                ).r;
+            vec2 texelUV;
+            float sampleDepth = ReadPCSSDepth(sampleUV, texelUV);
+            float depthOffset = dot(depthGradient, texelUV - uv);
+            float sampleReceiverDepth = receiverDepth + depthOffset;
 
-            if (sampleDepth <
-                receiverDepth - bias)
+            if (sampleDepth < sampleReceiverDepth - bias)
             {
-                blockerDepthSum +=
-                    LinearizeShadowDepth(
-                        sampleDepth
-                    );
+                // Bring the blocker onto the center ray before estimating
+                // penumbra width; otherwise the receiver slope inflates it.
+                blockerDepthSum += LinearizeShadowDepth(
+                    clamp(sampleDepth - depthOffset, 0.0, 1.0));
 
                 blockerCount++;
             }
@@ -211,7 +243,9 @@ float CalculateShadow(
     projected.xy =
         projected.xy * 0.5 + 0.5;
 
-    if (projected.x < 0.0 ||
+    vec2 depthGradient = ReceiverDepthGradient(projected);
+
+    if (lightSpacePosition.w <= 0.0 || projected.x < 0.0 ||
         projected.x > 1.0 ||
         projected.y < 0.0 ||
         projected.y > 1.0 ||
@@ -230,6 +264,8 @@ float CalculateShadow(
             (1.0 - dot(normal, lightDirection)),
             0.00025
         );
+
+    if (fragShadowMode == 0) return 0.0;
 
     // Mode 1: hard shadow
     if (fragShadowMode == 1)
@@ -261,6 +297,7 @@ float CalculateShadow(
             projected.xy,
             receiverDepth,
             bias,
+            depthGradient,
             blockerCount
         );
 
@@ -269,10 +306,8 @@ float CalculateShadow(
         return 0.0;
     }
 
-    if (blockerCount == 25)
-    {
-        return 1.0;
-    }
+    // Even when all 25 search taps are blockers, the wider filter footprint
+    // can contain lit samples. Continue filtering to avoid a false hard edge.
 
     float receiverLinearDepth =
         LinearizeShadowDepth(
@@ -315,17 +350,12 @@ float CalculateShadow(
                 filterRadius /
                 3.0;
 
-            float closestDepth =
-                texture(
-                    shadowMap,
-                    projected.xy + offset
-                ).r;
+            vec2 texelUV;
+            float closestDepth = ReadPCSSDepth(projected.xy + offset, texelUV);
+            float sampleReceiverDepth = receiverDepth +
+                dot(depthGradient, texelUV - projected.xy);
 
-            shadow +=
-                receiverDepth - bias >
-                closestDepth
-                ? 1.0
-                : 0.0;
+            shadow += sampleReceiverDepth - bias > closestDepth ? 1.0 : 0.0;
 
             sampleCount += 1.0;
         }
@@ -674,6 +704,14 @@ vec2 DirectionToEquirectangularUV(vec3 direction)
 // =============================================================
 // Main
 // =============================================================
+vec3 RotateEnvironment(vec3 direction)
+{
+    float angle = ubo.lightingSettings.x;
+    float c = cos(angle), s = sin(angle);
+    return vec3(c * direction.x + s * direction.z, direction.y,
+                -s * direction.x + c * direction.z);
+}
+
 void main()
 {
     // =========================================================
@@ -696,10 +734,20 @@ void main()
             material.baseColor.rgb;
     }
 
+    baseColor *= material.flags.x != 0 ? material.baseColor.rgb : vec3(1.0);
+
     vec3 normal =
         normalize(
             fragNormal
         );
+
+    if ((material.flags.y & 1) != 0) {
+        vec3 tangent = normalize(fragTangent.xyz - normal * dot(normal, fragTangent.xyz));
+        vec3 bitangent = cross(normal, tangent) * fragTangent.w;
+        vec3 mapped = texture(normalMap, fragTexCoord).xyz * 2.0 - 1.0;
+        mapped.xy *= material.textureSettings.x;
+        normal = normalize(mat3(tangent, bitangent, normal) * normalize(mapped));
+    }
 
     vec3 viewDirection =
         normalize(
@@ -727,6 +775,25 @@ void main()
             0.0,
             1.0
         );
+
+    if ((material.flags.y & 2) != 0) {
+        vec4 mr = texture(metallicRoughnessMap, fragTexCoord);
+        metallic *= mr.b;
+        roughness = clamp(roughness * mr.g, 0.02, 1.0);
+    }
+    if ((material.flags.y & 4) != 0)
+        ambientOcclusion *= mix(1.0, texture(occlusionMap, fragTexCoord).r, material.textureSettings.y);
+    vec3 emissive = material.emissive.rgb;
+    if ((material.flags.y & 8) != 0) emissive *= texture(emissiveMap, fragTexCoord).rgb;
+
+    // Material inspection deliberately bypasses light, shadows and tone mapping.
+    int view = ubo.shadowSettings.w;
+    if (view != 0) {
+        vec3 value = view == 1 ? baseColor : view == 2 ? normal * 0.5 + 0.5 :
+            view == 3 ? vec3(roughness) : view == 4 ? vec3(metallic) : vec3(ambientOcclusion);
+        outColor = vec4(value, 1.0);
+        return;
+    }
 
     // =========================================================
     // Direct point light
@@ -837,7 +904,7 @@ void main()
         vec3 irradiance =
             texture(
                 irradianceMap,
-                normal
+                RotateEnvironment(normal)
             ).rgb;
 
         vec3 diffuseEnvironmentLighting =
@@ -863,7 +930,7 @@ void main()
         vec3 reflectedEnvironment =
             textureLod(
                 prefilteredEnvironmentMap,
-                reflectionDirection,
+                RotateEnvironment(reflectionDirection),
                 roughness *
                 maxMipLevel
             ).rgb;
@@ -885,12 +952,10 @@ void main()
                 environmentBRDF.y
             );
 
-        environmentLighting =
-            (
-                diffuseEnvironmentLighting +
-                specularEnvironmentLighting
-            ) *
-            ambientOcclusion;
+        int component = int(ubo.lightingSettings.y);
+        environmentLighting = (component == 2 ? diffuseEnvironmentLighting :
+            component == 3 ? specularEnvironmentLighting :
+            diffuseEnvironmentLighting + specularEnvironmentLighting) * ambientOcclusion;
     }
 
     // =========================================================
@@ -910,18 +975,14 @@ void main()
     // Final lighting composition
     // =========================================================
 
-    vec3 hdrColor =
-        directLighting;
-
-    if (environmentLightingEnabled)
-    {
-        hdrColor +=
-            environmentLighting;
-    }
-    else
-    {
-        hdrColor +=
-            fallbackAmbient;
+    int lightingView = int(ubo.lightingSettings.y);
+    vec3 hdrColor = vec3(0.0);
+    if (lightingView == 0) {
+        hdrColor = directLighting + (environmentLightingEnabled ? environmentLighting : fallbackAmbient) + emissive;
+    } else if (lightingView == 1) {
+        hdrColor = directLighting;
+    } else {
+        hdrColor = environmentLighting;
     }
 
     // Exposure is stored as exposure * 100 in shadowSettings.z.

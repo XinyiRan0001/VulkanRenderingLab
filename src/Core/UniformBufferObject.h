@@ -19,4 +19,5 @@ struct UniformBufferObject
 
     PointLight pointLight;
     glm::vec4 cameraPosition;
+    glm::vec4 lightingSettings{0.0f}; // rotation radians, lighting component, reserved
 };

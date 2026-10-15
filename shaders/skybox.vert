@@ -17,9 +17,9 @@ layout(binding = 0) uniform UniformBufferObject
 
     ivec4 shadowSettings;
 
-    vec4 cameraPosition;
-
     PointLight pointLight;
+    vec4 cameraPosition;
+    vec4 lightingSettings;
 } ubo;
 
 const vec3 SKYBOX_VERTICES[36] =

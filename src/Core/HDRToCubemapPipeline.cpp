@@ -307,9 +307,8 @@ void HDRToCubemapPipeline::CreatePipeline()
         rasterizer.polygonMode =
             VK_POLYGON_MODE_FILL;
 
-        // The camera is inside the cube, so render its inner faces.
-        rasterizer.cullMode =
-            VK_CULL_MODE_NONE;
+        // Capture is viewed from inside the cube; do not cull its faces.
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
 
         rasterizer.frontFace =
             VK_FRONT_FACE_COUNTER_CLOCKWISE;

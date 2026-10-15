@@ -314,13 +314,8 @@ void IrradiancePipeline::CreatePipeline()
         rasterizer.polygonMode =
             VK_POLYGON_MODE_FILL;
 
-        // The capture camera is inside the cube.
-        //
-        // The cube vertices are wound toward the inside of the cube.
-        // Vulkan's Y-flipped capture projection reverses the screen-space
-        // winding, so clockwise triangles are treated as front-facing.
-        rasterizer.cullMode =
-            VK_CULL_MODE_FRONT_BIT;
+        // Capture is viewed from inside the cube; do not cull its faces.
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
 
         rasterizer.frontFace =
             VK_FRONT_FACE_COUNTER_CLOCKWISE;

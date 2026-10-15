@@ -8,12 +8,13 @@
 TextureImage::TextureImage(
     const PhysicalDevice& physicalDevice,
     const LogicalDevice& logicalDevice,
-    const TextureData& textureData
+    const TextureData& textureData,
+    bool srgb
 )
     : m_PhysicalDevice(physicalDevice),
     m_LogicalDevice(logicalDevice)
 {
-    m_Format = VK_FORMAT_R8G8B8A8_SRGB;
+    m_Format = srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
     if (!textureData.IsValid())
     {

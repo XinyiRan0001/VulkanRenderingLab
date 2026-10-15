@@ -66,6 +66,7 @@ public:
         GpuTimingResult& result
     ) const;
 
+    void CaptureFrame(uint32_t imageIndex, const std::string& path) const;
     void SetSkyboxEnabled(bool enabled);
 
 private:

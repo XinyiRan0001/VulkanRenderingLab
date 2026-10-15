@@ -6,6 +6,119 @@ This project extends concepts studied in the **GAMES202: High-Quality Real-Time 
 
 Rather than reproducing the original coursework, the project focuses on building a modular Vulkan renderer from scratch, integrating multiple shadow algorithms, profiling GPU execution using Vulkan Timestamp Queries, and evaluating rendering performance through benchmark-driven optimisation.
 
+## Character and Material Lab
+
+The default scene retains the existing character and ten material test objects.
+The character has one base-color texture; the repository contains no authored
+normal/roughness maps for it. The material objects compare the same base color
+across **metallic 0 (top row)** and **metallic 1 (bottom row)**. Roughness increases
+left to right: **0.02, 0.20, 0.45, 0.70, 1.00**. The grid is placed to the right of
+the character, above the floor, and the default/reset camera frames both.
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe
+```
+
+| Key | Material inspection |
+|---|---|
+| `V` | Cycle shaded, base color, world normal, roughness, metallic, AO |
+| `E` | Toggle environment lighting independently of the background |
+| `H` | Toggle background visibility only |
+| `F7` | Cycle combined, direct only, diffuse IBL only, specular IBL only |
+| `[` / `]` | Rotate environment lookup by -/+15 degrees |
+| `F5` / `F6` | Adjust exposure for both background and shaded objects |
+
+The window title reports the selected material/lighting views and IBL state.
+Material views bypass lighting, shadows, exposure and tone mapping. Lighting
+component views exclude fallback ambient/emissive so each contribution can be
+inspected separately. With IBL disabled, both IBL-only views are black.
+Rotation affects the background and both IBL lookups consistently, without
+regenerating cubemaps. Background and object exposure now use the same exponential
+tone mapping. The component views describe this renderer's split-sum IBL model;
+they are not ground-truth reference renders.
+
+For a reproducible view at startup (numeric modes follow the orders above):
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --material-view 3
+.\build\Release\VulkanRenderingLab.exe --lighting-view 3 --environment-degrees 45
+```
+
+### Irradiance cubemap seam correction
+
+The reported polygon-shaped patches on the rear of the material objects were
+reproduced even with shadows disabled. Fixed-camera captures isolated the problem
+to diffuse IBL, rather than PCSS. The irradiance generation draw loop omitted each
+face's push-constant view-projection matrix and its dynamic viewport/scissor.
+Cubemap capture passes also applied a screen-style Y flip despite face up vectors
+already following cube lookup conventions, and face culling could leave faces
+unrendered. Each irradiance face now records all required state, all three cube
+capture passes use the same unflipped projection convention, and capture cubes
+render without face culling. A fixed rear-view comparison confirms the reported
+patch boundary disappears with PCSS still enabled.
+
+![Before and after diffuse IBL correction](docs/images/irradiance-seam-comparison.png)
+
+To capture the renderer's own framebuffer for repeatable regression inspection:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --paused --yaw -135 --pitch 18 --shadow-mode 3 --frames 1 --capture build/ibl-check.png
+```
+
+`--shadow-mode 0` disables shadows for isolation; 1/2/3 select hard/PCF/PCSS.
+`--capture` saves the next rendered frame as PNG, before presentation; it requires
+surface transfer-source support and an existing output directory. Captures wait
+for GPU readback and must not be used for performance measurements.
+
+## Static glTF 2.0 asset pipeline
+
+The renderer now imports static `.gltf` and `.glb` scenes with hierarchical node
+transforms and per-material base color, normal, metallic-roughness, occlusion and
+emissive textures. Base color/emissive textures use sRGB formats; normal/MR/AO
+textures use linear UNORM formats. Normal maps use exported tangent frames,
+including mirrored transform handedness. Existing OBJ demo controls remain available.
+
+From the repository root, after a Release build:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --scene assets/models/gltf-validation/scene.glb
+```
+
+Omit `--scene` to run the original OBJ/material-ball demonstration. Use `--frames 3`
+for a bounded GPU smoke run. The original validation scene includes two materials,
+nested transforms, nonuniform scale, a mirrored instance, and all five texture slots.
+It is a correctness fixture, rather than a finished portfolio showcase scene.
+
+The initial importer supports opaque, single-sided static triangle meshes with
+`TEXCOORD_0`, external image files and GLB embedded PNG/JPEG images. Normal-mapped
+meshes must export tangents. Unsupported inputs produce an error: animation,
+skinning, morph targets, sparse accessors, vertex colors, image data URIs, required
+extensions, texture transforms, additional texture UV sets, transparency, and
+custom/mipmapped samplers. Textures currently have one mip level, using linear
+filtering with repeat addressing. Node transforms are baked into imported geometry;
+repeated mesh instances currently duplicate CPU geometry. Imported cameras/lights
+are not used; the renderer retains its own orbit camera and point light. Asset
+scale and framing may need adjustment for arbitrary scenes.
+
+Shaders compile automatically during CMake builds. The existing runtime shader
+paths expect the build directory to be named `build` and execution from the repo root.
+The parser is vendored [cgltf v1.15](https://github.com/jkuhlmann/cgltf/tree/v1.15)
+under its MIT license. Texture channels follow the
+[glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html).
+
+Loader regression tests (no GPU required):
+
+```powershell
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+Regenerate original fixtures with `python tools/generate_gltf_validation.py`.
+Tests cover both containers, embedded/external images, hierarchical transforms,
+mirrored winding and tangent handedness, material selection, and rejection of
+unsupported or corrupt input. These checks and GPU smoke runs do not replace
+visual comparison against a reference glTF viewer.
+
 ---
 
 # Features
@@ -428,117 +541,40 @@ For consistent comparisons, the same scene, camera position, lighting configurat
 
 ---
 
-# PCSS Performance Optimisation
+# PCSS Correctness and Optimisation
 
-GPU profiling identified the PCSS Main Pass as the primary shadow-related bottleneck.
+The PCSS path uses a 25-tap blocker search and a 49-tap variable-radius filter.
+It retains the standard no-blocker early return. Any search that finds blockers
+continues through penumbra estimation and filtering.
 
-The baseline PCSS implementation could perform:
+An earlier implementation returned fully shadowed when all 25 blocker-search
+samples were occluded. That shortcut was removed during the investigation of hard patches
+reported on the material test objects. The search radius is 5 texels, while
+the final filter radius can reach 18 texels: an entirely occluded search footprint
+does not imply an entirely occluded filter footprint. Skipping filtering could
+introduce an artificial discontinuity.
 
-- 25 blocker-search samples
-- 49 variable-radius filtering samples
-- Up to 74 shadow-map texture samples per affected fragment
+The remaining wide-kernel self-shadowing path now applies receiver-plane depth
+correction to each blocker-search and filtering sample. A screen-space derivative
+Jacobian converts the receiver depth slope into shadow UV space; comparison depth
+is evaluated at the actual sampled texel center. The blocker depth is brought back
+to the center ray for penumbra estimation. PCSS uses unfiltered `texelFetch` depths,
+avoiding interpolation between unrelated depth surfaces before comparison.
+This follows the per-sample gradient approach described in NVIDIA's
+[PCSS integration guide](https://developer.download.nvidia.com/assets/gamedev/docs/PCSS_Integration.pdf).
+It is a local planar approximation; large kernels over strongly curved surfaces
+and silhouette regions can still need further quality work. Hard/PCF paths remain
+unchanged for comparison. The later framebuffer investigation below isolated the reported polygon-shaped
+patches to diffuse IBL. These PCSS correctness changes were not sufficient to fix
+that separate irradiance-generation defect.
 
-To reduce unnecessary filtering work, an adaptive early-exit strategy was implemented.
-
-## Early-Exit Conditions
-
-### Fully Lit Fragments
-
-When the blocker search finds no blockers, the fragment is considered fully visible.
-
-The shader returns immediately without running the variable-radius filtering stage.
-
-```text
-No Blockers Found
-      |
-      v
-Fully Lit
-      |
-      v
-Skip Penumbra Filtering
-```
-
-### Fully Shadowed Fragments
-
-When every blocker-search sample is classified as a blocker, the fragment is considered to be inside a fully shadowed region.
-
-The shader returns a fully shadowed result without running the additional filtering stage.
-
-```text
-All Search Samples Are Blockers
-      |
-      v
-Fully Shadowed
-      |
-      v
-Skip Penumbra Filtering
-```
-
-### Penumbra Fragments
-
-Only fragments located near a potential shadow boundary continue to the expensive variable-radius filtering stage.
-
-```text
-Mixed Blocker Results
-      |
-      v
-Potential Penumbra
-      |
-      v
-Calculate Penumbra Width
-      |
-      v
-Run Variable-Radius Filtering
-```
-
-## Optimisation Result
-
-The initial PCSS benchmark measured approximately:
-
-```text
-Main Pass: 0.248 ms
-```
-
-After introducing adaptive early exits, the measured PCSS Main Pass time decreased to approximately:
-
-```text
-Main Pass: 0.231 ms
-```
-
-This represents an initial measured reduction of approximately 7% in PCSS Main Pass GPU time.
-
-The optimisation preserves the full filtering path for penumbra regions while avoiding redundant samples in clearly lit or deeply shadowed areas.
-
-## Optimisation Workflow
-
-The performance work followed this process:
-
-```text
-Implement PCSS
-      |
-      v
-Add Vulkan Timestamp Queries
-      |
-      v
-Profile Shadow and Main Passes
-      |
-      v
-Identify PCSS Main Pass Bottleneck
-      |
-      v
-Analyse Shadow-Map Sample Count
-      |
-      v
-Implement Adaptive Early Exit
-      |
-      v
-Re-run GPU Benchmark
-      |
-      v
-Compare Before and After Results
-```
-
-This workflow was designed to reflect a profiling-driven graphics programming process rather than applying unmeasured changes.
+Historical measurements of 0.248 ms before that shortcut and 0.231 ms after it
+(about 7% lower main-pass time) describe the earlier, approximate implementation.
+They do not establish the performance of the corrected shader. The benchmark
+tables above also predate this correction and the material-grid layout changes;
+rerun benchmarks at fixed camera/light settings before using those numbers in a
+resume or reporting a current speedup. Compilation and smoke tests do not confirm
+that every visible shadow artifact has been resolved; visual comparison is needed.
 
 ---
 

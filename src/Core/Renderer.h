@@ -20,6 +20,8 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     void DrawFrame();
+    void CaptureNextFrame(const std::string& path) { m_CapturePath = path; }
+    void WaitForFrame() const;
     void StartBenchmark(int shadowMode);
 
 private:
@@ -31,6 +33,7 @@ private:
     VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
     VkFence m_InFlightFence = VK_NULL_HANDLE;
 
+    std::string m_CapturePath;
     bool m_HasSubmittedFrame = false;
     int m_BenchmarkShadowMode = 0;
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Vertex.h"
+#include "TextureData.h"
+#include <array>
 
 #include <cstdint>
 #include <vector>
@@ -39,6 +41,11 @@ struct MaterialData
     float ambientOcclusion = 1.0f;
 
     bool hasDiffuseTexture = false;
+    // base color, normal, metallic-roughness, occlusion, emissive; -1 = fallback.
+    std::array<int, 5> textures{{-1, -1, -1, -1, -1}};
+    float normalScale = 1.0f;
+    float occlusionStrength = 1.0f;
+    glm::vec3 emissive = glm::vec3(0.0f);
 };
 
 // =========================================================
@@ -50,10 +57,13 @@ struct MaterialData
 // {
 //     ivec4 flags;
 //     vec4 baseColor;
+//     vec4 emissive;
+//     vec4 textureSettings;
 //     vec4 properties;
 // };
 //
-// flags.x       = use diffuse texture
+// flags.x = use base color texture; flags.y bits = normal, MR, AO, emissive
+// textureSettings.xy = normal scale, occlusion strength
 //
 // properties.x  = metallic
 // properties.y  = roughness
@@ -69,6 +79,9 @@ struct alignas(16) MaterialPushConstants
     alignas(16) glm::vec4 baseColor =
         glm::vec4(1.0f);
 
+    alignas(16) glm::vec4 emissive = glm::vec4(0.0f);
+    alignas(16) glm::vec4 textureSettings = glm::vec4(1.0f);
+
     alignas(16) glm::vec4 properties =
         glm::vec4(
             0.0f,
@@ -79,12 +92,13 @@ struct alignas(16) MaterialPushConstants
 };
 
 static_assert(
-    sizeof(MaterialPushConstants) == 48,
-    "MaterialPushConstants must be exactly 48 bytes."
+    sizeof(MaterialPushConstants) == 80,
+    "MaterialPushConstants must be exactly 80 bytes."
     );
 
 struct MeshData
 {
+    std::vector<TextureData> images;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
 

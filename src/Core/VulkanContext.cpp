@@ -14,6 +14,7 @@
 #include "Image.h"
 #include "UniformBufferObject.h"
 #include "DescriptorManager.h"
+#include "GLTFLoader.h"
 #include "DescriptorSetLayout.h"
 #include "OBJLoader.h"
 #include "MeshData.h"
@@ -38,7 +39,18 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-VulkanContext::VulkanContext(Window& window)
+namespace {
+const char* MaterialViewName(int mode) {
+    static const char* names[] = {"Shaded", "Base Color", "World Normal", "Roughness", "Metallic", "AO"};
+    return names[mode];
+}
+const char* LightingViewName(int mode) {
+    static const char* names[] = {"Combined", "Direct Only", "Diffuse IBL", "Specular IBL"};
+    return names[mode];
+}
+}
+
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath)
     : m_Window(window)
 {
     // =========================================================
@@ -209,6 +221,11 @@ m_GraphicsPipeline =
     // Load Marry model
     // =========================================================
 
+    MeshData combinedMesh;
+    m_IsGltfScene = !scenePath.empty();
+    if (m_IsGltfScene) {
+        combinedMesh = GLTFLoader::Load(scenePath);
+    } else {
     MeshData maryMesh = OBJLoader::Load(
         "assets/models/mary/Marry.obj"
     );
@@ -307,13 +324,8 @@ m_GraphicsPipeline =
     const float normalizationScale =
         2.0f / largestDimension;
 
-    // Position is specified before the shared 0.35 model scale.
-    // This places the test sphere to the left of the character.
-    const glm::vec3 materialBallPosition(
-        -4.0f,
-        1.35f,
-        0.0f
-    );
+    // Keep the normalized mesh centered; grid placement is applied once below.
+
 
     for (Vertex& vertex : materialBallMesh.vertices)
     {
@@ -327,7 +339,7 @@ m_GraphicsPipeline =
             (position - boundsCenter) *
             normalizationScale;
 
-        position += materialBallPosition;
+
 
         vertex.position[0] = position.x;
         vertex.position[1] = position.y;
@@ -370,8 +382,7 @@ m_GraphicsPipeline =
         vertex.position[2] -= 1.5f;
     }
 
-    // The current renderer only has one texture descriptor.
-    // Do not let the floor accidentally sample Marry's texture.
+    // The floor uses a constant material, not the character's color map.
     for (MaterialData& material : floorMesh.materials)
     {
         material.hasDiffuseTexture = false;
@@ -384,8 +395,6 @@ m_GraphicsPipeline =
     // =========================================================
     // Combine Marry and Floor into one MeshData
     // =========================================================
-
-    MeshData combinedMesh;
 
     // ---------------------------------------------------------
     // Copy Marry vertices and indices
@@ -514,23 +523,14 @@ m_GraphicsPipeline =
             const float sphereScale =
                 0.65f;
 
-            const float sphereSpacingX =
-                1.65f;
-
-            const float sphereSpacingY =
-                1.65f;
+            const float sphereSpacingX = 1.5f;
+            const float sphereSpacingY = 1.7f;
 
             const glm::vec3 spherePosition =
                 glm::vec3(
-                    -5.2f +
-                        static_cast<float>(sphere) *
-                        1.45f,
-
-                    1.0f -
-                        static_cast<float>(row) *
-                        1.55f,
-
-                    -1.3f
+                    1.9f + static_cast<float>(sphere) * sphereSpacingX,
+                    2.55f - static_cast<float>(row) * sphereSpacingY,
+                    -0.3f
                 );
 
             for (Vertex& vertex :
@@ -621,6 +621,15 @@ m_GraphicsPipeline =
                 );
             }
         }
+    }
+
+    } // legacy OBJ demonstration
+    if (!m_IsGltfScene) {
+        m_CameraTarget = glm::vec3(1.0f, 0.65f, 0.0f);
+        m_CameraDistance = 4.8f;
+        std::cout << "[Material Lab] Left: character | Right: two material rows\n"
+            << "  Top metallic=0; bottom metallic=1; roughness left to right: 0.02, 0.20, 0.45, 0.70, 1.00\n"
+            << "  V: material views | E: IBL | H: background | F7: lighting components | [ / ]: environment rotation\n";
     }
 
     std::cout
@@ -1187,7 +1196,7 @@ m_GraphicsPipeline =
 
     ubo.model = glm::scale(
         glm::mat4(1.0f),
-        glm::vec3(0.35f)
+        glm::vec3(m_IsGltfScene ? 1.0f : 0.35f)
     );
 
     ubo.view = glm::lookAt(
@@ -1245,6 +1254,19 @@ m_GraphicsPipeline =
         << "[Context] Creating descriptor manager..."
         << std::endl;
 
+    std::vector<std::array<const TextureImage*, 5>> materialTextures;
+    for (const auto& material : combinedMesh.materials) {
+        std::array<const TextureImage*, 5> bindings{};
+        for (size_t slot = 0; slot < 5; ++slot) {
+            if (material.textures[slot] >= 0) {
+                auto texture = std::make_unique<TextureImage>(*m_PhysicalDevice, *m_LogicalDevice,
+                    combinedMesh.images.at(material.textures[slot]), slot == 0 || slot == 4);
+                bindings[slot] = texture.get();
+                m_MaterialImages.push_back(std::move(texture));
+            } else bindings[slot] = m_TextureImage.get();
+        }
+        materialTextures.push_back(bindings);
+    }
     m_DescriptorManager =
     std::make_unique<DescriptorManager>(
         *m_LogicalDevice,
@@ -1263,7 +1285,8 @@ m_GraphicsPipeline =
         *m_IrradianceCubemap,
 
         m_ShadowDepthImage->GetView(),
-        m_ShadowSampler
+        m_ShadowSampler,
+        materialTextures
     );
 
     std::cout
@@ -1454,6 +1477,24 @@ void VulkanContext::SetupCameraControls()
                 return;
             }
 
+            if (action == GLFW_PRESS) {
+                if (key == GLFW_KEY_V) {
+                    context->m_MaterialView = (context->m_MaterialView + 1) % 6;
+                    std::cout << "[Material View] " << MaterialViewName(context->m_MaterialView) << std::endl;
+                } else if (key == GLFW_KEY_E) {
+                    context->m_EnableEnvironmentLighting = !context->m_EnableEnvironmentLighting;
+                    std::cout << "[IBL] " << (context->m_EnableEnvironmentLighting ? "ON" : "OFF") << std::endl;
+                } else if (key == GLFW_KEY_F7) {
+                    context->m_LightingView = (context->m_LightingView + 1) % 4;
+                    std::cout << "[Lighting View] " << LightingViewName(context->m_LightingView) << std::endl;
+                }
+            }
+            if ((action == GLFW_PRESS || action == GLFW_REPEAT) &&
+                (key == GLFW_KEY_LEFT_BRACKET || key == GLFW_KEY_RIGHT_BRACKET)) {
+                context->m_EnvironmentRotation += glm::radians(key == GLFW_KEY_LEFT_BRACKET ? -15.0f : 15.0f);
+                context->m_EnvironmentRotation = std::remainder(context->m_EnvironmentRotation, 6.28318530718f);
+                std::cout << "[Environment] Rotation: " << glm::degrees(context->m_EnvironmentRotation) << " degrees" << std::endl;
+            }
             if (key == GLFW_KEY_H &&
                 action == GLFW_PRESS)
             {
@@ -1569,7 +1610,7 @@ void VulkanContext::SetupCameraControls()
             {
                 context->m_CameraYaw = 0.0f;
                 context->m_CameraPitch = 0.15f;
-                context->m_CameraDistance = 3.5f;
+                context->m_CameraDistance = context->m_IsGltfScene ? 3.5f : 4.8f;
 
                 std::cout
                     << "[Camera] Reset"
@@ -1672,6 +1713,9 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
 
     switch (m_ShadowMode)
     {
+    case 0:
+        shadowModeName = "Shadows Off";
+        break;
     case 1:
         shadowModeName = "Hard Shadow";
         break;
@@ -1710,7 +1754,9 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         << " | "
         << std::setprecision(2)
         << frameTimeMs
-        << " ms";
+        << " ms | " << MaterialViewName(m_MaterialView)
+        << " | " << LightingViewName(m_LightingView)
+        << " | IBL " << (m_EnableEnvironmentLighting ? "ON" : "OFF");
 
     glfwSetWindowTitle(
         m_Window.GetHandle(),
@@ -1761,8 +1807,8 @@ void VulkanContext::GenerateEnvironmentCubemap()
             10.0f
         );
 
-    captureProjection[1][1] *=
-        -1.0f;
+    // Cube face up vectors already encode Vulkan's cube lookup orientation.
+    // A screen-rendering Y flip would mirror each face independently.
 
     const glm::vec3 capturePosition =
         glm::vec3(0.0f);
@@ -2150,8 +2196,8 @@ void VulkanContext::GeneratePrefilteredEnvironmentCubemap()
             10.0f
         );
 
-    captureProjection[1][1] *=
-        -1.0f;
+    // Cube face up vectors already encode Vulkan's cube lookup orientation.
+    // A screen-rendering Y flip would mirror each face independently.
 
     const glm::vec3 capturePosition =
         glm::vec3(0.0f);
@@ -2601,7 +2647,8 @@ void VulkanContext::GenerateIrradianceCubemap()
             10.0f
         );
 
-    captureProjection[1][1] *= -1.0f;
+    // Cube face up vectors already encode Vulkan's cube lookup orientation.
+    // A screen-rendering Y flip would mirror each face independently.
 
     const glm::vec3 capturePosition =
         glm::vec3(0.0f);
@@ -2780,7 +2827,20 @@ for (uint32_t faceIndex = 0;
         nullptr
     );
 
-    // Push face capture matrix here.
+    // Dynamic state and face transform must be set on this command buffer.
+    // Neither is inherited from the previous cubemap generation submission.
+    VkViewport viewport{};
+    viewport.width = float(cubemapSize);
+    viewport.height = float(cubemapSize);
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    VkRect2D scissor{{0, 0}, {cubemapSize, cubemapSize}};
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    IrradiancePushConstants pushConstants{};
+    pushConstants.viewProjection = captureProjection * glm::lookAt(
+        capturePosition, capturePosition + faceDirections[faceIndex], faceUpDirections[faceIndex]);
+    vkCmdPushConstants(commandBuffer, m_IrradiancePipeline->GetLayout(),
+        VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pushConstants), &pushConstants);
 
     vkCmdDraw(
         commandBuffer,
@@ -2930,9 +2990,12 @@ for (uint32_t faceIndex = 0;
 
 VulkanContext::~VulkanContext()
 {
+    // The last submitted frame may still reference every resource below.
+    if (m_LogicalDevice) vkDeviceWaitIdle(m_LogicalDevice->GetHandle());
     m_Renderer.reset();
     m_CommandManager.reset();
     m_DescriptorManager.reset();
+    m_MaterialImages.clear();
 
     m_ShadowPipeline.reset();
     m_SkyboxPipeline.reset();
@@ -2942,6 +3005,11 @@ VulkanContext::~VulkanContext()
 
     m_TextureImage.reset();
     
+    m_IrradianceDescriptorManager.reset();
+    m_IrradiancePipeline.reset();
+    m_IrradianceFramebuffer.reset();
+    m_IrradianceRenderPass.reset();
+    m_IrradianceCubemap.reset();
     m_HDRToCubemapDescriptorManager.reset();
     m_PrefilterDescriptorManager.reset();
 
@@ -2961,6 +3029,7 @@ VulkanContext::~VulkanContext()
     m_EnvironmentCubemap.reset();
     m_HDRTextureImage.reset();
 
+    m_UniformBuffer.reset();
     m_IndexBuffer.reset();
     m_VertexBuffer.reset();
 
@@ -2988,6 +3057,10 @@ VulkanContext::~VulkanContext()
     m_LogicalDevice.reset();
     m_PhysicalDevice.reset();
 
+    if (m_Surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(m_Instance, m_Surface, nullptr);
+        m_Surface = VK_NULL_HANDLE;
+    }
     if (m_Instance != VK_NULL_HANDLE)
     {
         vkDestroyInstance(m_Instance, nullptr);
@@ -3387,6 +3460,7 @@ void VulkanContext::CreateShadowSampler()
 
 void VulkanContext::UpdateUniformBuffer()
 {
+    m_Renderer->WaitForFrame();
     UniformBufferObject ubo{};
 
     // =========================================================
@@ -3395,18 +3469,14 @@ void VulkanContext::UpdateUniformBuffer()
 
     ubo.model = glm::scale(
         glm::mat4(1.0f),
-        glm::vec3(0.35f)
+        glm::vec3(m_IsGltfScene ? 1.0f : 0.35f)
     );
 
     // =========================================================
     // Orbit camera
     // =========================================================
 
-    const glm::vec3 cameraTarget(
-        0.0f,
-        0.8f,
-        0.0f
-    );
+    const glm::vec3 cameraTarget = m_CameraTarget;
 
     const float cosPitch =
         std::cos(m_CameraPitch);
@@ -3472,8 +3542,9 @@ void VulkanContext::UpdateUniformBuffer()
         // Store exposure as an integer multiplied by 100.
         static_cast<int>(m_Exposure * 100.0f),
 
-        0
+        m_MaterialView
     );
+    ubo.lightingSettings = glm::vec4(m_EnvironmentRotation, float(m_LightingView), 0.0f, 0.0f);
 
     // =========================================================
     // Orbiting / manually controlled light
@@ -3606,10 +3677,6 @@ void VulkanContext::ToggleSkybox()
     m_EnableSkybox =
         !m_EnableSkybox;
 
-    // For now, skybox visibility and environment lighting
-    // are controlled together as one rendering mode.
-    m_EnableEnvironmentLighting =
-        m_EnableSkybox;
 
     if (m_CommandManager)
     {
@@ -3640,4 +3707,21 @@ void VulkanContext::DrawFrame()
     m_Renderer->DrawFrame();
 
     std::cout << "[Context] After DrawFrame" << std::endl;
+}
+void VulkanContext::SetInspection(int materialView, int lightingView, float environmentDegrees)
+{
+    if (materialView < 0 || materialView > 5 || lightingView < 0 || lightingView > 3 || !std::isfinite(environmentDegrees))
+        throw std::runtime_error("Invalid material view (0..5), lighting view (0..3), or environment angle.");
+    m_MaterialView = materialView;
+    m_LightingView = lightingView;
+    m_EnvironmentRotation = glm::radians(std::remainder(environmentDegrees, 360.0f));
+}
+
+void VulkanContext::CaptureNextFrame(const std::string& path) { m_Renderer->CaptureNextFrame(path); }
+void VulkanContext::ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, float pitchDegrees, bool paused) {
+    if (shadowMode < 0 || shadowMode > 3 || !std::isfinite(yawDegrees) || !std::isfinite(pitchDegrees) || std::abs(pitchDegrees) >= 89.0f)
+        throw std::runtime_error("Shadow mode must be 0..3; camera angles must be finite and pitch within (-89,89)");
+    m_ShadowMode = shadowMode;
+    m_CameraYaw = glm::radians(yawDegrees); m_CameraPitch = glm::radians(pitchDegrees);
+    m_PointLightAnimationEnabled = !paused;
 }
