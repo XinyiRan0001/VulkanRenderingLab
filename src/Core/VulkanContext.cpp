@@ -18,6 +18,8 @@
 #include "DescriptorSetLayout.h"
 #include "OBJLoader.h"
 #include "MeshData.h"
+#include "InstancedScene.h"
+#include "GpuCulling.h"
 #include "TextureData.h"
 #include "TextureImage.h"
 #include "ShadowRenderPass.h"
@@ -50,13 +52,17 @@ const char* LightingViewName(int mode) {
 }
 }
 
-VulkanContext::VulkanContext(Window& window, const std::string& scenePath)
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling)
     : m_Window(window)
 {
     // =========================================================
     // Vulkan base objects
     // =========================================================
 
+    if (stressCount > 10000 || (stressCount && !scenePath.empty()))
+        throw std::runtime_error("--stress-count accepts 1..10000 and cannot be combined with --scene");
+    m_StressCount = stressCount;
+    m_VerifyCulling = verifyCulling;
     CreateInstance();
     CreateSurface();
 
@@ -250,9 +256,8 @@ m_GraphicsPipeline =
 // Load Material Lab sphere
 // =========================================================
 
-    MeshData materialBallMesh = OBJLoader::Load(
-        "assets/models/materiallab/TestObj.obj"
-    );
+    MeshData materialBallMesh = stressCount ? CreateStressSphere() : OBJLoader::Load(
+        "assets/models/materiallab/TestObj.obj");
 
     if (materialBallMesh.vertices.empty())
     {
@@ -493,135 +498,18 @@ m_GraphicsPipeline =
             floorSubMesh
         );
     }
-    for (int row = 0; row < 2; ++row)
-    {
-        for (int sphere = 0; sphere < 5; ++sphere)
-        {
-            MeshData sphereMesh = materialBallMesh;
-            const float roughnessValues[5] =
-            {
-                0.02f,
-                0.20f,
-                0.45f,
-                0.70f,
-                1.00f
-            };
-
-            for (MaterialData& material : sphereMesh.materials)
-            {
-                material.hasDiffuseTexture = false;
-                material.metallic = row == 0 ? 0.0f : 1.0f;
-                material.roughness = roughnessValues[sphere];
-                material.ambientOcclusion = 1.0f;
-
-            }
-
-            // ---------------------------------------------------------
-            // Position the material test spheres
-            // ---------------------------------------------------------
-
-            const float sphereScale =
-                0.65f;
-
-            const float sphereSpacingX = 1.5f;
-            const float sphereSpacingY = 1.7f;
-
-            const glm::vec3 spherePosition =
-                glm::vec3(
-                    1.9f + static_cast<float>(sphere) * sphereSpacingX,
-                    2.55f - static_cast<float>(row) * sphereSpacingY,
-                    -0.3f
-                );
-
-            for (Vertex& vertex :
-                sphereMesh.vertices)
-            {
-                glm::vec3 position =
-                    glm::vec3(
-                        vertex.position[0],
-                        vertex.position[1],
-                        vertex.position[2]
-                    );
-
-                position *=
-                    sphereScale;
-
-                position +=
-                    spherePosition;
-
-                vertex.position[0] =
-                    position.x;
-
-                vertex.position[1] =
-                    position.y;
-
-                vertex.position[2] =
-                    position.z;
-            }
-            // =========================================================
-            // Append Material Lab sphere
-            // =========================================================
-
-            const uint32_t materialBallVertexOffset =
-                static_cast<uint32_t>(
-                    combinedMesh.vertices.size()
-                    );
-
-            const uint32_t materialBallIndexOffset =
-                static_cast<uint32_t>(
-                    combinedMesh.indices.size()
-                    );
-
-            const int materialBallMaterialOffset =
-                static_cast<int>(
-                    combinedMesh.materials.size()
-                    );
-
-            // Append vertices.
-            combinedMesh.vertices.insert(
-                combinedMesh.vertices.end(),
-                sphereMesh.vertices.begin(),
-                sphereMesh.vertices.end()
-            );
-
-            // Append indices and shift them to the sphere's vertex range.
-            for (uint32_t index : sphereMesh.indices)
-            {
-                combinedMesh.indices.push_back(
-                    index +
-                    materialBallVertexOffset
-                );
-            }
-
-            // Append materials.
-            combinedMesh.materials.insert(
-                combinedMesh.materials.end(),
-                sphereMesh.materials.begin(),
-                sphereMesh.materials.end()
-            );
-
-            // Append submeshes and shift index/material offsets.
-            for (const SubMesh& sourceSubMesh :
-                sphereMesh.subMeshes)
-            {
-                SubMesh materialBallSubMesh =
-                    sourceSubMesh;
-
-                materialBallSubMesh.firstIndex +=
-                    materialBallIndexOffset;
-
-                if (materialBallSubMesh.materialId >= 0)
-                {
-                    materialBallSubMesh.materialId +=
-                        materialBallMaterialOffset;
-                }
-
-                combinedMesh.subMeshes.push_back(
-                    materialBallSubMesh
-                );
-            }
-        }
-    }
+    // Geometry is appended once. All placements and varying PBR parameters
+    // live in the instance array, not in copied/modified vertices.
+    for (auto& material : materialBallMesh.materials) material.hasDiffuseTexture = false;
+    const auto instances = CreateMaterialInstances(stressCount);
+    AppendInstancedMesh(combinedMesh, materialBallMesh, instances);
+    const uint64_t geometryBytes = materialBallMesh.vertices.size() * sizeof(Vertex) +
+        materialBallMesh.indices.size() * sizeof(uint32_t);
+    std::cout << "[Instancing] Objects: " << instances.size()
+        << " | mesh copies: 1 | material-batch draws per pass: " << materialBallMesh.subMeshes.size()
+        << " | shared mesh bytes: " << geometryBytes
+        << " | instance bytes: " << instances.size() * sizeof(InstanceData)
+        << " | duplicated-geometry baseline bytes: " << geometryBytes * instances.size() << std::endl;
 
     } // legacy OBJ demonstration
     if (!m_IsGltfScene) {
@@ -632,6 +520,11 @@ m_GraphicsPipeline =
             << "  V: material views | E: IBL | H: background | F7: lighting components | [ / ]: environment rotation\n";
     }
 
+    if (stressCount) {
+        m_CameraTarget = glm::vec3(0.0f, 0.6f, 0.0f);
+        m_CameraDistance = std::max(8.0f, std::ceil(std::sqrt(float(stressCount))) * 0.8f);
+    }
+    m_DefaultCameraDistance = m_CameraDistance;
     std::cout
         << "[Scene] Combined vertices: "
         << combinedMesh.vertices.size()
@@ -1215,7 +1108,7 @@ m_GraphicsPipeline =
         glm::radians(45.0f),
         aspect,
         0.1f,
-        100.0f
+        m_StressCount ? 300.0f : 100.0f
     );
 
     ubo.proj[1][1] *= -1.0f;
@@ -1267,11 +1160,24 @@ m_GraphicsPipeline =
         }
         materialTextures.push_back(bindings);
     }
+    const VkDeviceSize instanceBytes = combinedMesh.instances.size() * sizeof(InstanceData);
+    VkPhysicalDeviceProperties instanceLimits{};
+    vkGetPhysicalDeviceProperties(m_PhysicalDevice->GetHandle(), &instanceLimits);
+    if (instanceBytes > instanceLimits.limits.maxStorageBufferRange)
+        throw std::runtime_error("Instance data exceeds maxStorageBufferRange");
+    m_InstanceBuffer = std::make_unique<Buffer>(*m_PhysicalDevice, *m_LogicalDevice,
+        instanceBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    m_InstanceBuffer->UploadData(combinedMesh.instances.data(), instanceBytes);
+    if (combinedMesh.instances.size() > 1)
+        m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling);
     m_DescriptorManager =
     std::make_unique<DescriptorManager>(
         *m_LogicalDevice,
         *m_GraphicsPipeline,
         *m_UniformBuffer,
+        *m_InstanceBuffer,
+        m_GpuCulling ? m_GpuCulling->VisibleBuffer() : *m_InstanceBuffer,
         *m_TextureImage,
         *m_HDRTextureImage,
 
@@ -1317,7 +1223,8 @@ m_GraphicsPipeline =
             *m_IndexBuffer,
             *m_DescriptorManager,
             combinedMesh.subMeshes,
-            combinedMesh.materials
+            combinedMesh.materials,
+            m_GpuCulling.get()
         );
 
     std::cout
@@ -1455,7 +1362,7 @@ void VulkanContext::SetupCameraControls()
                 std::clamp(
                     context->m_CameraDistance,
                     1.5f,
-                    10.0f
+                    std::max(10.0f, context->m_DefaultCameraDistance * 2.0f)
                 );
         }
     );
@@ -1478,6 +1385,10 @@ void VulkanContext::SetupCameraControls()
             }
 
             if (action == GLFW_PRESS) {
+                if (key == GLFW_KEY_C) {
+                    context->m_CullingEnabled = !context->m_CullingEnabled;
+                    std::cout << "[GPU Culling] " << (context->m_CullingEnabled ? "ON" : "OFF") << std::endl;
+                }
                 if (key == GLFW_KEY_V) {
                     context->m_MaterialView = (context->m_MaterialView + 1) % 6;
                     std::cout << "[Material View] " << MaterialViewName(context->m_MaterialView) << std::endl;
@@ -1610,7 +1521,7 @@ void VulkanContext::SetupCameraControls()
             {
                 context->m_CameraYaw = 0.0f;
                 context->m_CameraPitch = 0.15f;
-                context->m_CameraDistance = context->m_IsGltfScene ? 3.5f : 4.8f;
+                context->m_CameraDistance = context->m_DefaultCameraDistance;
 
                 std::cout
                     << "[Camera] Reset"
@@ -1758,6 +1669,8 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         << " | " << LightingViewName(m_LightingView)
         << " | IBL " << (m_EnableEnvironmentLighting ? "ON" : "OFF");
 
+    if (m_GpuCulling) title << " | Cull " << (m_CullingEnabled ? "ON " : "OFF ")
+        << m_GpuCulling->VisibleCount() << "/" << m_GpuCulling->TotalCount();
     glfwSetWindowTitle(
         m_Window.GetHandle(),
         title.str().c_str()
@@ -3029,6 +2942,8 @@ VulkanContext::~VulkanContext()
     m_EnvironmentCubemap.reset();
     m_HDRTextureImage.reset();
 
+    m_GpuCulling.reset();
+    m_InstanceBuffer.reset();
     m_UniformBuffer.reset();
     m_IndexBuffer.reset();
     m_VertexBuffer.reset();
@@ -3526,7 +3441,7 @@ void VulkanContext::UpdateUniformBuffer()
         glm::radians(45.0f),
         aspect,
         0.1f,
-        100.0f
+        m_StressCount ? 300.0f : 100.0f
     );
 
     ubo.proj[1][1] *= -1.0f;
@@ -3662,10 +3577,8 @@ void VulkanContext::UpdateUniformBuffer()
         lightProjection *
         lightView;
 
-    // =========================================================
-    // Upload
-    // =========================================================
-
+    if (m_GpuCulling) m_GpuCulling->Update(ubo,m_CullingEnabled,m_VerifyCulling);
+    // Uniform updates and readback happen only after the preceding render fence.
     m_UniformBuffer->UploadData(
         &ubo,
         sizeof(ubo)
@@ -3705,6 +3618,7 @@ void VulkanContext::DrawFrame()
     std::cout << "[Context] Before DrawFrame" << std::endl;
 
     m_Renderer->DrawFrame();
+    if (m_GpuCulling) m_GpuCulling->MarkSubmitted();
 
     std::cout << "[Context] After DrawFrame" << std::endl;
 }
@@ -3724,4 +3638,21 @@ void VulkanContext::ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, 
     m_ShadowMode = shadowMode;
     m_CameraYaw = glm::radians(yawDegrees); m_CameraPitch = glm::radians(pitchDegrees);
     m_PointLightAnimationEnabled = !paused;
+}
+
+void VulkanContext::SetCulling(bool enabled, bool verify) { m_CullingEnabled=enabled; m_VerifyCulling=verify; }
+void VulkanContext::FinishDiagnostics() {
+    m_Renderer->WaitForFrame();
+    if (m_GpuCulling) {
+        m_GpuCulling->ReadCompleted();
+        std::cout << "[GPU Culling] Visible: " << m_GpuCulling->VisibleCount() << " / " << m_GpuCulling->TotalCount()
+            << " | enabled: " << m_CullingEnabled << " | shadows: all instances" << std::endl;
+    }
+}
+
+void VulkanContext::ConfigureCullingCamera(float distance, float targetOffsetX) {
+    if(!std::isfinite(distance)||!std::isfinite(targetOffsetX)||distance<0.0f)
+        throw std::runtime_error("Invalid diagnostic camera distance/offset");
+    if(distance>0.0f) m_CameraDistance=distance;
+    m_CameraTarget.x+=targetOffsetX;
 }

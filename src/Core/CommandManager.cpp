@@ -32,7 +32,8 @@ CommandManager::CommandManager(
     const Buffer& indexBuffer,
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
-    const std::vector<MaterialData>& materials
+    const std::vector<MaterialData>& materials,
+    GpuCulling* culling
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -47,6 +48,7 @@ CommandManager::CommandManager(
     m_VertexBuffer(vertexBuffer),
     m_IndexBuffer(indexBuffer),
     m_DescriptorManager(descriptorManager),
+    m_Culling(culling),
     m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
@@ -157,7 +159,7 @@ void CommandManager::CreateTimestampQueryPool()
     queryPoolInfo.queryType =
         VK_QUERY_TYPE_TIMESTAMP;
 
-    queryPoolInfo.queryCount = 4;
+    queryPoolInfo.queryCount = 6;
 
     VkResult result = vkCreateQueryPool(
         m_LogicalDevice.GetHandle(),
@@ -241,8 +243,11 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             m_TimestampQueryPool,
             0,
-            4
+            6
         );
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,4);
+        if (m_Culling) m_Culling->Record(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,5);
 
         // =====================================================
         // Shadow Pass
@@ -346,10 +351,10 @@ void CommandManager::RecordCommandBuffers()
             vkCmdDrawIndexed(
                 m_CommandBuffers[i],
                 subMesh.indexCount,
-                1,
+                subMesh.instanceCount,
                 subMesh.firstIndex,
                 0,
-                0
+                subMesh.firstInstance
             );
         }
 
@@ -514,6 +519,7 @@ void CommandManager::RecordCommandBuffers()
             VK_INDEX_TYPE_UINT32
         );
 
+        uint32_t indirectIndex = 0;
         for (const SubMesh& subMesh : m_SubMeshes)
         {
             VkDescriptorSet materialSet = m_DescriptorManager.GetDescriptorSet(subMesh.materialId);
@@ -573,22 +579,27 @@ void CommandManager::RecordCommandBuffers()
                     );
             }
 
+            const bool gpuDriven = m_Culling && subMesh.firstInstance > 0;
+            materialPushConstants.flags.z = gpuDriven ? 1 : 0;
             vkCmdPushConstants(
                 m_CommandBuffers[i],
                 m_GraphicsPipeline.GetLayout(),
-                VK_SHADER_STAGE_FRAGMENT_BIT,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                 0,
                 sizeof(MaterialPushConstants),
                 &materialPushConstants
             );
 
-            vkCmdDrawIndexed(
+            if (gpuDriven) {
+                vkCmdDrawIndexedIndirect(m_CommandBuffers[i],m_Culling->IndirectBuffer().GetHandle(),
+                    VkDeviceSize(indirectIndex++)*sizeof(VkDrawIndexedIndirectCommand),1,sizeof(VkDrawIndexedIndirectCommand));
+            } else vkCmdDrawIndexed(
                 m_CommandBuffers[i],
                 subMesh.indexCount,
-                1,
+                subMesh.instanceCount,
                 subMesh.firstIndex,
                 0,
-                0
+                subMesh.firstInstance
             );
         }
 
@@ -626,7 +637,7 @@ bool CommandManager::GetGpuTimingResult(
     GpuTimingResult& result
 ) const
 {
-    std::array<uint64_t, 4> timestamps{};
+    std::array<uint64_t, 6> timestamps{};
 
     VkResult queryResult = vkGetQueryPoolResults(
         m_LogicalDevice.GetHandle(),
@@ -666,12 +677,13 @@ bool CommandManager::GetGpuTimingResult(
 
     const double totalNanoseconds =
         static_cast<double>(
-            timestamps[3] - timestamps[0]
+            timestamps[3] - timestamps[4]
             ) * nanosecondsPerTick;
 
     constexpr double nanosecondsToMilliseconds =
         1.0 / 1000000.0;
 
+    result.cullingPassMs = double(timestamps[5]-timestamps[4])*nanosecondsPerTick*nanosecondsToMilliseconds;
     result.shadowPassMs =
         shadowNanoseconds *
         nanosecondsToMilliseconds;

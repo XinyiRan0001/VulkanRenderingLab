@@ -14,6 +14,8 @@ find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 add_executable(VulkanRenderingLab
     src/main.cpp
     src/Core/GLTFLoader.cpp
+    src/Core/InstancedScene.cpp
+    src/Core/GpuCulling.cpp
 
     src/Core/Window.h
     src/Core/Window.cpp
@@ -131,7 +133,7 @@ target_include_directories(VulkanRenderingLab PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 if(NOT Vulkan_GLSLC_EXECUTABLE)
     message(FATAL_ERROR "glslc is required to compile renderer shaders")
 endif()
-file(GLOB RENDERER_SHADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag")
+file(GLOB RENDERER_SHADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
 set(SHADER_OUTPUTS)
 foreach(SHADER IN LISTS RENDERER_SHADERS)
     get_filename_component(SHADER_NAME "${SHADER}" NAME)
@@ -154,4 +156,18 @@ if(BUILD_TESTING)
     target_include_directories(GLTFLoaderTests PRIVATE src/Core third_party/cgltf ${STB_INCLUDE_DIRS})
     target_link_libraries(GLTFLoaderTests PRIVATE Vulkan::Vulkan glfw glm::glm)
     add_test(NAME GLTFLoaderTests COMMAND GLTFLoaderTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/gltf-validation")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(InstancedSceneTests tests/InstancedSceneTests.cpp src/Core/InstancedScene.cpp)
+    target_include_directories(InstancedSceneTests PRIVATE src)
+    target_link_libraries(InstancedSceneTests PRIVATE Vulkan::Vulkan glfw glm::glm)
+    add_test(NAME InstancedSceneTests COMMAND InstancedSceneTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(FrustumTests tests/FrustumTests.cpp)
+    target_include_directories(FrustumTests PRIVATE src)
+    target_link_libraries(FrustumTests PRIVATE glm::glm)
+    add_test(NAME FrustumTests COMMAND FrustumTests)
 endif()

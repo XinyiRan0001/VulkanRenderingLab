@@ -19,12 +19,14 @@
 #include "SkyboxPipeline.h"
 
 #include <vector>
+#include "GpuCulling.h"
 
 class CommandManager
 {
 public:
     struct GpuTimingResult
     {
+        double cullingPassMs = 0.0;
         double shadowPassMs = 0.0;
         double mainPassMs = 0.0;
         double totalGpuMs = 0.0;
@@ -45,7 +47,8 @@ public:
         const Buffer& indexBuffer,
         const DescriptorManager& descriptorManager,
         const std::vector<SubMesh>& subMeshes,
-        const std::vector<MaterialData>& materials
+        const std::vector<MaterialData>& materials,
+        GpuCulling* culling = nullptr
     );
     ~CommandManager();
 
@@ -84,6 +87,7 @@ private:
     const Buffer& m_IndexBuffer;
     const DescriptorManager& m_DescriptorManager;
 
+    GpuCulling* m_Culling = nullptr;
     std::vector<SubMesh> m_SubMeshes;
     std::vector<MaterialData> m_Materials;
 

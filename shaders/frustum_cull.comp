@@ -1,0 +1,30 @@
+#version 450
+layout(local_size_x=64) in;
+struct InstanceData { mat4 model; vec4 materialProperties; };
+struct DrawCommand { uint indexCount; uint instanceCount; uint firstIndex; int vertexOffset; uint firstInstance; };
+layout(std430,binding=0) readonly buffer Input { InstanceData instances[]; };
+layout(std430,binding=1) writeonly buffer Visible { uint visibleIds[]; };
+layout(std430,binding=2) buffer Indirect { DrawCommand commands[]; };
+layout(std140,binding=3) uniform CullUniform { vec4 planes[6]; vec4 localSphere; uvec4 settings; } cull;
+
+void main() {
+    uint offset=gl_GlobalInvocationID.x;
+    if(offset>=cull.settings.y) return;
+    uint id=cull.settings.x+offset;
+    mat4 model=instances[id].model;
+    vec3 center=(model*vec4(cull.localSphere.xyz,1.0)).xyz;
+    mat3 a=mat3(model);
+    float norm1=0.0, normInf=0.0;
+    for(int i=0;i<3;++i) {
+        float column=0.0,row=0.0;
+        for(int j=0;j<3;++j) { column+=abs(a[i][j]); row+=abs(a[j][i]); }
+        norm1=max(norm1,column);normInf=max(normInf,row);
+    }
+    float radius=cull.localSphere.w*sqrt(norm1*normInf);
+    if(cull.settings.w!=0) for(int i=0;i<6;++i)
+        if(dot(cull.planes[i].xyz,center)+cull.planes[i].w < -radius-1e-4) return;
+    // A unique slot for each visible instance; execution order is not guaranteed.
+    uint slot=atomicAdd(commands[0].instanceCount,1);
+    visibleIds[slot]=id;
+    for(uint i=1;i<cull.settings.z;++i) atomicAdd(commands[i].instanceCount,1);
+}

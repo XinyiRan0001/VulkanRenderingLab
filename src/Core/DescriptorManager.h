@@ -20,6 +20,8 @@ public:
     const LogicalDevice& logicalDevice,
     const GraphicsPipeline& graphicsPipeline,
     const Buffer& uniformBuffer,
+    const Buffer& instanceBuffer,
+    const Buffer& visibleBuffer,
     const TextureImage& textureImage,
     const TextureImage& hdrTextureImage,
     const TextureImage& environmentCubemap,
@@ -45,6 +47,8 @@ private:
     const LogicalDevice& m_LogicalDevice;
     const GraphicsPipeline& m_GraphicsPipeline;
     const Buffer& m_UniformBuffer;
+    const Buffer& m_InstanceBuffer;
+    const Buffer& m_VisibleBuffer;
     const TextureImage& m_TextureImage;
     const TextureImage& m_HDRTextureImage;
     const TextureImage& m_EnvironmentCubemap;

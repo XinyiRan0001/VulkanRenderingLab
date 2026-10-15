@@ -6,6 +6,7 @@
 #include "LogicalDevice.h"
 #include "Swapchain.h"
 #include "CommandManager.h"
+#include <vector>
 
 class Renderer
 {
@@ -30,7 +31,7 @@ private:
     const CommandManager& m_CommandManager;
 
     VkSemaphore m_ImageAvailableSemaphore = VK_NULL_HANDLE;
-    VkSemaphore m_RenderFinishedSemaphore = VK_NULL_HANDLE;
+    std::vector<VkSemaphore> m_RenderFinishedSemaphores; // one per swapchain image, not per CPU frame
     VkFence m_InFlightFence = VK_NULL_HANDLE;
 
     std::string m_CapturePath;
@@ -38,6 +39,7 @@ private:
     int m_BenchmarkShadowMode = 0;
 
     double m_GpuTimingAccumulator = 0.0;
+    double m_CullingTimingAccumulator = 0.0;
     double m_ShadowTimingAccumulator = 0.0;
     double m_MainTimingAccumulator = 0.0;
 
@@ -50,6 +52,7 @@ private:
     double m_BenchmarkStartTime = 0.0;
     double m_BenchmarkDuration = 5.0;
 
+    double m_BenchmarkCullingAccumulator = 0.0;
     double m_BenchmarkShadowAccumulator = 0.0;
     double m_BenchmarkMainAccumulator = 0.0;
     double m_BenchmarkTotalAccumulator = 0.0;

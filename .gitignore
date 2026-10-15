@@ -4,3 +4,5 @@
 # Visual Studio
 .vs/
 **/.vs/
+# Local course walkthroughs
+/docs/*walkthrough*.md

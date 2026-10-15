@@ -52,6 +52,7 @@ layout(location = 4) in vec4 fragLightSpacePosition;
 layout(location = 5) flat in int fragShadowMode;
 
 layout(location = 6) in vec4 fragTangent;
+layout(location = 7) flat in vec4 fragInstanceProperties;
 layout(binding = 8) uniform sampler2D normalMap;
 layout(binding = 9) uniform sampler2D metallicRoughnessMap;
 layout(binding = 10) uniform sampler2D occlusionMap;
@@ -775,6 +776,14 @@ void main()
             0.0,
             1.0
         );
+
+    // These vary per instance, while texture bindings and base color remain
+    // shared by the material batch. Identity instances keep their material values.
+    if (fragInstanceProperties.w > 0.5) {
+        metallic = clamp(fragInstanceProperties.x, 0.0, 1.0);
+        roughness = clamp(fragInstanceProperties.y, 0.02, 1.0);
+        ambientOcclusion = clamp(fragInstanceProperties.z, 0.0, 1.0);
+    }
 
     if ((material.flags.y & 2) != 0) {
         vec4 mr = texture(metallicRoughnessMap, fragTexCoord);

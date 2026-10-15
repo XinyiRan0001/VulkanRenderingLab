@@ -7,6 +7,8 @@ DescriptorManager::DescriptorManager(
     const LogicalDevice& logicalDevice,
     const GraphicsPipeline& graphicsPipeline,
     const Buffer& uniformBuffer,
+    const Buffer& instanceBuffer,
+    const Buffer& visibleBuffer,
     const TextureImage& textureImage,
     const TextureImage& hdrTextureImage,
     const TextureImage& environmentCubemap,
@@ -20,6 +22,8 @@ DescriptorManager::DescriptorManager(
     : m_LogicalDevice(logicalDevice),
     m_GraphicsPipeline(graphicsPipeline),
     m_UniformBuffer(uniformBuffer),
+    m_InstanceBuffer(instanceBuffer),
+    m_VisibleBuffer(visibleBuffer),
     m_TextureImage(textureImage),
     m_HDRTextureImage(hdrTextureImage),
     m_EnvironmentCubemap(environmentCubemap),
@@ -81,7 +85,7 @@ DescriptorManager::~DescriptorManager()
 
 void DescriptorManager::CreateDescriptorPool()
 {
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    std::array<VkDescriptorPoolSize, 3> poolSizes{};
 
     poolSizes[0].type =
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -94,6 +98,8 @@ void DescriptorManager::CreateDescriptorPool()
     // Diffuse, Shadow, HDR, Environment, Prefilter, BRDF LUT, Irradiance
     poolSizes[1].descriptorCount = 11 * static_cast<uint32_t>(m_MaterialTextures.size() + 1);
 
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[2].descriptorCount = 2 * static_cast<uint32_t>(m_MaterialTextures.size() + 1);
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType =
         VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -257,7 +263,7 @@ void DescriptorManager::UpdateDescriptorSet()
     irradianceCubemapImageInfo.sampler =
         m_IrradianceCubemap.GetSampler();
     
-    std::array<VkWriteDescriptorSet, 12> descriptorWrites{};
+    std::array<VkWriteDescriptorSet, 14> descriptorWrites{};
 
     // binding 0: uniform buffer
     descriptorWrites[0].sType =
@@ -401,6 +407,18 @@ void DescriptorManager::UpdateDescriptorSet()
     descriptorWrites[7].pImageInfo =
         &irradianceCubemapImageInfo;
         
+    VkDescriptorBufferInfo instanceInfo{m_InstanceBuffer.GetHandle(), 0, m_InstanceBuffer.GetSize()};
+    descriptorWrites[12].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[12].dstBinding = 12;
+    descriptorWrites[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[12].descriptorCount = 1;
+    descriptorWrites[12].pBufferInfo = &instanceInfo;
+    VkDescriptorBufferInfo visibleInfo{m_VisibleBuffer.GetHandle(),0,m_VisibleBuffer.GetSize()};
+    descriptorWrites[13].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[13].dstBinding=13;
+    descriptorWrites[13].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[13].descriptorCount=1;
+    descriptorWrites[13].pBufferInfo=&visibleInfo;
     const VkDescriptorSet globalSet = m_DescriptorSet;
     for (size_t setIndex = 0; setIndex <= m_MaterialSets.size(); ++setIndex) {
         const bool isMaterial = setIndex < m_MaterialSets.size();

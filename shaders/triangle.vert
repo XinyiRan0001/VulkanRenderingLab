@@ -21,6 +21,17 @@ layout(binding = 0) uniform UniformBufferObject
     vec4 lightingSettings;
 } ubo;
 
+
+// CPU InstanceData is 80 bytes; std430 uses the same array stride.
+struct InstanceData { mat4 model; vec4 materialProperties; };
+layout(std430, binding = 12) readonly buffer InstanceBuffer {
+    InstanceData instances[];
+};
+
+layout(std430, binding = 13) readonly buffer VisibleInstances { uint visibleIds[]; };
+layout(push_constant) uniform MaterialPushConstant {
+    ivec4 flags; vec4 baseColor; vec4 emissive; vec4 textureSettings; vec4 properties;
+} material;
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
 layout(location = 2) in vec3 inNormal;
@@ -35,11 +46,17 @@ layout(location = 4) out vec4 fragLightSpacePosition;
 layout(location = 5) flat out int fragShadowMode;
 
 layout(location = 6) out vec4 fragTangent;
+layout(location = 7) flat out vec4 fragInstanceProperties;
 
 void main()
 {
+    // gl_InstanceIndex already includes firstInstance from vkCmdDrawIndexed.
+    uint instanceId = material.flags.z != 0 ? visibleIds[gl_InstanceIndex] : uint(gl_InstanceIndex);
+    InstanceData instance = instances[instanceId];
+    mat4 objectToWorld = ubo.model * instance.model;
+    fragInstanceProperties = instance.materialProperties;
     vec4 worldPosition =
-        ubo.model *
+        objectToWorld *
         vec4(inPosition, 1.0);
 
     gl_Position =
@@ -48,10 +65,10 @@ void main()
         worldPosition;
 
     fragColor = inColor;
-    fragTangent = vec4(mat3(ubo.model) * inTangent.xyz, inTangent.w * sign(determinant(mat3(ubo.model))));
+    fragTangent = vec4(mat3(objectToWorld) * inTangent.xyz, inTangent.w * sign(determinant(mat3(objectToWorld))));
 
     fragNormal =
-        mat3(transpose(inverse(ubo.model))) *
+        mat3(transpose(inverse(objectToWorld))) *
         inNormal;
 
     fragTexCoord = inTexCoord;

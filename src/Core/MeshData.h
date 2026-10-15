@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Vertex.h"
+#include "InstanceData.h"
 #include "TextureData.h"
 #include <array>
 
@@ -18,6 +19,9 @@ struct SubMesh
     uint32_t firstIndex = 0;
     uint32_t indexCount = 0;
     int materialId = -1;
+    uint32_t instanceCount = 1;
+    uint32_t firstInstance = 0;
+    glm::vec4 localSphere{0.0f}; // prototype bounds, before instance/global transforms
 };
 
 // =========================================================
@@ -63,6 +67,7 @@ struct MaterialData
 // };
 //
 // flags.x = use base color texture; flags.y bits = normal, MR, AO, emissive
+// flags.z = main vertex shader uses compacted visible-instance IDs
 // textureSettings.xy = normal scale, occlusion strength
 //
 // properties.x  = metallic
@@ -98,6 +103,7 @@ static_assert(
 
 struct MeshData
 {
+    std::vector<InstanceData> instances{InstanceData{}};
     std::vector<TextureData> images;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;

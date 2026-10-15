@@ -27,10 +27,8 @@ Renderer::~Renderer()
         vkDestroyFence(device, m_InFlightFence, nullptr);
     }
 
-    if (m_RenderFinishedSemaphore != VK_NULL_HANDLE)
-    {
-        vkDestroySemaphore(device, m_RenderFinishedSemaphore, nullptr);
-    }
+    for (auto semaphore : m_RenderFinishedSemaphores)
+        if (semaphore != VK_NULL_HANDLE) vkDestroySemaphore(device,semaphore,nullptr);
 
     if (m_ImageAvailableSemaphore != VK_NULL_HANDLE)
     {
@@ -49,11 +47,20 @@ void Renderer::CreateSyncObjects()
 
     VkDevice device = m_LogicalDevice.GetHandle();
 
-    if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &m_ImageAvailableSemaphore) != VK_SUCCESS ||
-        vkCreateSemaphore(device, &semaphoreInfo, nullptr, &m_RenderFinishedSemaphore) != VK_SUCCESS ||
-        vkCreateFence(device, &fenceInfo, nullptr, &m_InFlightFence) != VK_SUCCESS)
-    {
-        throw std::runtime_error("Failed to create renderer synchronization objects.");
+    try {
+        if (vkCreateSemaphore(device,&semaphoreInfo,nullptr,&m_ImageAvailableSemaphore)!=VK_SUCCESS ||
+            vkCreateFence(device,&fenceInfo,nullptr,&m_InFlightFence)!=VK_SUCCESS)
+            throw std::runtime_error("Failed to create frame synchronization objects");
+        m_RenderFinishedSemaphores.resize(m_Swapchain.GetImageCount(),VK_NULL_HANDLE);
+        for(auto& semaphore : m_RenderFinishedSemaphores)
+            if(vkCreateSemaphore(device,&semaphoreInfo,nullptr,&semaphore)!=VK_SUCCESS)
+                throw std::runtime_error("Failed to create per-image present semaphore");
+    } catch(...) {
+        for(auto semaphore : m_RenderFinishedSemaphores)
+            if(semaphore) vkDestroySemaphore(device,semaphore,nullptr);
+        if(m_ImageAvailableSemaphore) vkDestroySemaphore(device,m_ImageAvailableSemaphore,nullptr);
+        if(m_InFlightFence) vkDestroyFence(device,m_InFlightFence,nullptr);
+        throw;
     }
 }
 
@@ -102,6 +109,7 @@ void Renderer::DrawFrame()
 
             if (m_BenchmarkRunning)
             {
+                m_BenchmarkCullingAccumulator += timing.cullingPassMs;
                 m_BenchmarkShadowAccumulator +=
                     timing.shadowPassMs;
 
@@ -174,6 +182,7 @@ void Renderer::DrawFrame()
                         << "\n"
                         << std::fixed
                         << std::setprecision(3)
+                        << "Cull/Compact: " << m_BenchmarkCullingAccumulator / sampleCount << " ms\n"
                         << "Shadow Pass: "
                         << averageShadowMs
                         << " ms"
@@ -201,6 +210,7 @@ void Renderer::DrawFrame()
             // Regular 0.5-second GPU timing average
             // =========================================================
 
+            m_CullingTimingAccumulator += timing.cullingPassMs;
             m_ShadowTimingAccumulator +=
                 timing.shadowPassMs;
 
@@ -239,7 +249,7 @@ void Renderer::DrawFrame()
                     << std::fixed
                     << std::setprecision(3)
                     << "[GPU Timing Average] "
-                    << "Shadow: "
+                    << "Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
                     << averageShadowMs
                     << " ms | Main: "
                     << averageMainMs
@@ -249,6 +259,7 @@ void Renderer::DrawFrame()
                     << m_GpuTimingSampleCount
                     << std::endl;
 
+                m_CullingTimingAccumulator = 0.0;
                 m_ShadowTimingAccumulator = 0.0;
                 m_MainTimingAccumulator = 0.0;
                 m_GpuTimingAccumulator = 0.0;
@@ -337,7 +348,7 @@ void Renderer::DrawFrame()
 
     VkSemaphore signalSemaphores[] =
     {
-        m_RenderFinishedSemaphore
+        m_RenderFinishedSemaphores.at(imageIndex)
     };
 
     submitInfo.signalSemaphoreCount = 1;
@@ -429,6 +440,7 @@ void Renderer::StartBenchmark(int shadowMode)
     m_BenchmarkStartTime =
         glfwGetTime();
 
+    m_BenchmarkCullingAccumulator = 0.0;
     m_BenchmarkShadowAccumulator = 0.0;
     m_BenchmarkMainAccumulator = 0.0;
     m_BenchmarkTotalAccumulator = 0.0;

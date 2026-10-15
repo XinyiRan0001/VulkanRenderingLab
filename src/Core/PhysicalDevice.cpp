@@ -121,7 +121,7 @@ QueueFamilyIndices PhysicalDevice::FindQueueFamilies(VkPhysicalDevice device) co
 
     for (uint32_t i = 0; i < queueFamilyCount; i++)
     {
-        if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+        if ((queueFamilies[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) == (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
         {
             indices.graphicsFamily = i;
         }

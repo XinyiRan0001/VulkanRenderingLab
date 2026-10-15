@@ -6,6 +6,64 @@ This project extends concepts studied in the **GAMES202: High-Quality Real-Time 
 
 Rather than reproducing the original coursework, the project focuses on building a modular Vulkan renderer from scratch, integrating multiple shadow algorithms, profiling GPU execution using Vulkan Timestamp Queries, and evaluating rendering performance through benchmark-driven optimisation.
 
+## Shared mesh instancing
+
+The ten original material-lab objects now share one vertex/index mesh and use an
+80-byte SSBO record per instance (transform + metallic/roughness/AO override).
+Both main and shadow vertex shaders fetch binding 12 using `gl_InstanceIndex`.
+The original model's two material ranges need two instanced draws per pass,
+compared with twenty ball draws before. Character, floor and baked glTF geometry
+use identity instance 0. The initial shared-mesh stage is now extended by GPU frustum culling and indirect
+main-pass draws, described below. Shadow draws retain the full instance range.
+
+A separate low-detail sphere field can exercise instance counts without repeating
+the high-detail model's geometry:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --stress-count 10000 --pitch 55 --paused
+```
+
+Stress mode supports 1..10000 instances and cannot be combined with `--scene`.
+It uses a 153-vertex/672-index sphere (11,868 mesh bytes) plus 80 bytes per object.
+It retains the existing light/shadow frustum; large-scene shadow coverage is limited.
+Geometry storage and draw-call savings do not imply proportional GPU-time savings.
+
+## GPU frustum culling and indirect rendering
+
+A 64-thread compute shader tests conservative prototype bounding spheres against
+the six Vulkan camera-frustum planes, compacts visible instance IDs using atomics,
+and writes `VkDrawIndexedIndirectCommand.instanceCount` for each material range.
+The main vertex shader remaps compact slots through the visible-ID buffer. CPU
+camera-plane extraction is constant work; per-instance CPU tests occur only in
+explicit verification mode. Rendering does not wait for a CPU-visible count to
+choose its draw size. Character/floor/baked glTF draws retain the direct path;
+this implementation supports one shared-mesh instance group with multiple material
+ranges. Shadows deliberately draw every instance.
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --stress-count 10000 --camera-distance 8 --pitch 25 --paused
+```
+
+Press **C** to toggle frustum culling; the window title reports the most recently
+completed frame's visible/total count. `--no-culling` runs GPU compaction in pass-through
+mode; `--verify-culling` additionally reads back exact visible IDs for comparison
+with an independent CPU frustum-test path. That mode is for correctness testing,
+not performance measurement. Normal telemetry copies only indirect commands.
+
+The tested fixed stress view reduced main-pass ball instances from **10000 to 3016**
+with **pixel-identical culling ON/OFF captures**; a camera shifted away produced
+zero instances correctly. These are workload counts, not a GPU speedup claim.
+GPU timestamps now include a Cull/Compact interval (reset, dispatch, dependencies
+and diagnostic copy) as well as shadow and main passes. No Hi-Z occlusion culling,
+transparent sorting, async compute, or multi-frame output ring is implemented.
+
+The device selection requires a combined graphics+compute queue. Each indirect call
+has drawCount=1 and firstInstance=0, avoiding optional multi-draw/nonzero indirect
+first-instance feature requirements. Explicit transfer/compute/vertex/indirect/host
+dependencies protect the outputs. Vulkan validation also prompted fixes to legacy
+IBL push-constant stages, render-pass depth/external dependencies and per-image
+present semaphores.
+
 ## Character and Material Lab
 
 The default scene retains the existing character and ten material test objects.
