@@ -33,7 +33,7 @@ CommandManager::CommandManager(
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
     const std::vector<MaterialData>& materials,
-    GpuCulling* culling
+    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -49,6 +49,8 @@ CommandManager::CommandManager(
     m_IndexBuffer(indexBuffer),
     m_DescriptorManager(descriptorManager),
     m_Culling(culling),
+    m_HiZ(hiZ),
+    m_Debug(debug),
     m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
@@ -159,7 +161,7 @@ void CommandManager::CreateTimestampQueryPool()
     queryPoolInfo.queryType =
         VK_QUERY_TYPE_TIMESTAMP;
 
-    queryPoolInfo.queryCount = 6;
+    queryPoolInfo.queryCount = 8;
 
     VkResult result = vkCreateQueryPool(
         m_LogicalDevice.GetHandle(),
@@ -243,8 +245,11 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             m_TimestampQueryPool,
             0,
-            6
+            8
         );
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,6);
+        if (m_HiZ) m_HiZ->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,7);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,4);
         if (m_Culling) m_Culling->Record(m_CommandBuffers[i]);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,5);
@@ -603,6 +608,7 @@ void CommandManager::RecordCommandBuffers()
             );
         }
 
+        if (m_Debug) m_Debug->Record(m_CommandBuffers[i]);
         vkCmdEndRenderPass(
             m_CommandBuffers[i]
         );
@@ -637,7 +643,7 @@ bool CommandManager::GetGpuTimingResult(
     GpuTimingResult& result
 ) const
 {
-    std::array<uint64_t, 6> timestamps{};
+    std::array<uint64_t, 8> timestamps{};
 
     VkResult queryResult = vkGetQueryPoolResults(
         m_LogicalDevice.GetHandle(),
@@ -677,12 +683,13 @@ bool CommandManager::GetGpuTimingResult(
 
     const double totalNanoseconds =
         static_cast<double>(
-            timestamps[3] - timestamps[4]
+            timestamps[3] - timestamps[6]
             ) * nanosecondsPerTick;
 
     constexpr double nanosecondsToMilliseconds =
         1.0 / 1000000.0;
 
+    result.hiZPassMs = double(timestamps[7]-timestamps[6])*nanosecondsPerTick*nanosecondsToMilliseconds;
     result.cullingPassMs = double(timestamps[5]-timestamps[4])*nanosecondsPerTick*nanosecondsToMilliseconds;
     result.shadowPassMs =
         shadowNanoseconds *

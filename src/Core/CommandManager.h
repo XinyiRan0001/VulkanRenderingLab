@@ -20,12 +20,15 @@
 
 #include <vector>
 #include "GpuCulling.h"
+#include "HiZ.h"
+#include "FrustumDebug.h"
 
 class CommandManager
 {
 public:
     struct GpuTimingResult
     {
+        double hiZPassMs = 0.0;
         double cullingPassMs = 0.0;
         double shadowPassMs = 0.0;
         double mainPassMs = 0.0;
@@ -48,7 +51,7 @@ public:
         const DescriptorManager& descriptorManager,
         const std::vector<SubMesh>& subMeshes,
         const std::vector<MaterialData>& materials,
-        GpuCulling* culling = nullptr
+        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr
     );
     ~CommandManager();
 
@@ -88,6 +91,8 @@ private:
     const DescriptorManager& m_DescriptorManager;
 
     GpuCulling* m_Culling = nullptr;
+    HiZ* m_HiZ = nullptr;
+    FrustumDebug* m_Debug = nullptr;
     std::vector<SubMesh> m_SubMeshes;
     std::vector<MaterialData> m_Materials;
 

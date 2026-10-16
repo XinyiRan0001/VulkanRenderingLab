@@ -18,6 +18,7 @@
 #include "IrradiancePipeline.h"
 #include "IrradianceDescriptorManager.h"
 
+#include "UniformBufferObject.h"
 #include <vector>
 #include <string>
 #include <GLFW/glfw3.h>
@@ -34,6 +35,8 @@ class Framebuffer;
 class CommandManager;
 class Renderer;
 class GpuCulling;
+class HiZ;
+class FrustumDebug;
 class GraphicsPipeline;
 class Buffer;
 class Image;
@@ -48,7 +51,7 @@ class SkyboxPipeline;
 class VulkanContext
 {
 public:
-    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false);
+    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false);
     ~VulkanContext();
     void UpdateUniformBuffer();
     VulkanContext(const VulkanContext&) = delete;
@@ -61,6 +64,8 @@ public:
     void ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, float pitchDegrees, bool paused);
     void CaptureNextFrame(const std::string& path);
     void ConfigureCullingCamera(float distance, float targetOffsetX);
+    void StartCullingObserver();
+    void SetOcclusion(bool enabled) { m_OcclusionEnabled=enabled; }
     void SetCulling(bool enabled, bool verify);
     void FinishDiagnostics();
     void SetInspection(int materialView, int lightingView, float environmentDegrees);
@@ -91,6 +96,7 @@ private:
     std::unique_ptr<Buffer> m_IndexBuffer;
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<Buffer> m_InstanceBuffer;
+    std::unique_ptr<HiZ> m_HiZ;
     std::unique_ptr<GpuCulling> m_GpuCulling;
     std::unique_ptr<TextureImage> m_TextureImage;
     std::vector<std::unique_ptr<TextureImage>> m_MaterialImages;
@@ -145,7 +151,12 @@ private:
     int m_MaterialView = 0;
     int m_LightingView = 0;
     float m_EnvironmentRotation = 0.0f;
+    bool m_CullingFrozen = false;
+    bool m_FrozenCameraValid = false;
+    UniformBufferObject m_FrozenCamera{};
+    std::unique_ptr<FrustumDebug> m_FrustumDebug;
     bool m_CullingEnabled = true;
+    bool m_OcclusionEnabled = true;
     bool m_VerifyCulling = false;
     uint32_t m_StressCount = 0;
     float m_DefaultCameraDistance = 3.5f;

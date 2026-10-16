@@ -16,8 +16,10 @@ int main(int argc, char** argv)
         int shadowMode = 3;
         float yaw = 0.0f, pitch = 8.594367f;
         bool paused = false;
+        bool cullingObserver = false;
         bool culling = true, verifyCulling = false;
-        float cameraDistance=0.0f, targetOffsetX=0.0f;
+        bool occlusionScene=false,occlusion=true,pitchSpecified=false;
+        float cameraDistance=0.0f, targetOffsetX=0.0f, cameraSweep=0.0f;
         int materialView = 0, lightingView = 0;
         float environmentDegrees = 0.0f;
         for (int i = 1; i < argc; ++i) {
@@ -31,9 +33,13 @@ int main(int argc, char** argv)
             else if (option == "--capture" && i + 1 < argc) capturePath = argv[++i];
             else if (option == "--shadow-mode" && i + 1 < argc) shadowMode = std::stoi(argv[++i]);
             else if (option == "--yaw" && i + 1 < argc) yaw = std::stof(argv[++i]);
-            else if (option == "--pitch" && i + 1 < argc) pitch = std::stof(argv[++i]);
+            else if (option == "--pitch" && i + 1 < argc) { pitch = std::stof(argv[++i]);pitchSpecified=true; }
+            else if (option == "--camera-sweep" && i+1<argc) cameraSweep=std::stof(argv[++i]);
             else if (option == "--camera-distance" && i+1<argc) cameraDistance=std::stof(argv[++i]);
             else if (option == "--target-offset-x" && i+1<argc) targetOffsetX=std::stof(argv[++i]);
+            else if (option == "--occlusion-scene") occlusionScene=true;
+            else if (option == "--culling-observer") cullingObserver = true;
+            else if (option == "--no-occlusion") occlusion=false;
             else if (option == "--no-culling") culling = false;
             else if (option == "--verify-culling") verifyCulling = true;
             else if (option == "--paused") paused = true;
@@ -43,14 +49,19 @@ int main(int argc, char** argv)
             else if (option == "--frames" && i + 1 < argc) {
                 frameLimit = std::stoi(argv[++i]);
                 if (frameLimit <= 0) throw std::runtime_error("--frames must be positive");
-            } else throw std::runtime_error("Usage: VulkanRenderingLab [--scene path.gltf|path.glb] [--frames count] [--stress-count 1..10000] [--no-culling] [--verify-culling] [--camera-distance value] [--target-offset-x value] [--material-view 0..5] [--lighting-view 0..3] [--environment-degrees angle]");
+            } else throw std::runtime_error("Usage: VulkanRenderingLab [--scene path.gltf|path.glb] [--frames count] [--stress-count 1..10000] [--occlusion-scene] [--culling-observer] [--no-occlusion] [--no-culling] [--verify-culling] [--camera-distance value] [--target-offset-x value] [--material-view 0..5] [--lighting-view 0..3] [--environment-degrees angle]");
         }
+        if (cameraSweep!=0.0f && !frameLimit) throw std::runtime_error("--camera-sweep requires a bounded --frames run");
+        if (occlusionScene && !stressCount) stressCount=1600;
+        if (occlusionScene && !pitchSpecified) pitch=25.0f;
         Window window(1280, 720, "Vulkan Rendering Lab");
-        VulkanContext context(window, scenePath, stressCount, verifyCulling);
+        VulkanContext context(window, scenePath, stressCount, verifyCulling, occlusionScene);
+        context.SetOcclusion(occlusion);
         context.SetCulling(culling,verifyCulling);
         context.SetInspection(materialView, lightingView, environmentDegrees);
         context.ConfigureShadowDiagnostic(shadowMode, yaw, pitch, paused);
         context.ConfigureCullingCamera(cameraDistance,targetOffsetX);
+        if (cullingObserver) context.StartCullingObserver();
         if (!capturePath.empty()) context.CaptureNextFrame(capturePath);
         int frames = 0;
 
@@ -71,10 +82,12 @@ int main(int argc, char** argv)
 
             window.PollEvents();
 
+            if(cameraSweep!=0.0f) context.ConfigureShadowDiagnostic(shadowMode,yaw+float(frames)*cameraSweep,pitch,paused);
             context.UpdateUniformBuffer();
             context.DrawFrame();
             context.UpdateWindowTitle(deltaTime);
-            if (frameLimit && ++frames >= frameLimit) break;
+            ++frames;
+            if (frameLimit && frames >= frameLimit) break;
         }
         context.FinishDiagnostics();
     }

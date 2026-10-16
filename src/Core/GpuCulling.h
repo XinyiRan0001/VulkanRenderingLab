@@ -1,6 +1,7 @@
 #pragma once
 #include "Buffer.h"
 #include "Frustum.h"
+#include "HiZ.h"
 #include "MeshData.h"
 #include "UniformBufferObject.h"
 #include <memory>
@@ -11,7 +12,7 @@ class GpuCulling
 {
   public:
     GpuCulling(const PhysicalDevice &, const LogicalDevice &, const Buffer &instances, const MeshData &,
-               bool verifyReadback = false);
+               bool verifyReadback = false, HiZ *hiZ = nullptr, VkDescriptorImageInfo fallback = {});
     ~GpuCulling();
     GpuCulling(const GpuCulling &) = delete;
     GpuCulling &operator=(const GpuCulling &) = delete;
@@ -23,7 +24,7 @@ class GpuCulling
     {
         return *m_Indirect;
     }
-    void Update(const UniformBufferObject &, bool enabled, bool verify);
+    void Update(const UniformBufferObject &, bool enabled, bool verify, bool occlusion = true);
     void Record(VkCommandBuffer) const;
     void MarkSubmitted()
     {
@@ -33,6 +34,14 @@ class GpuCulling
     uint32_t VisibleCount() const
     {
         return m_VisibleCount;
+    }
+    uint32_t FrustumCount() const
+    {
+        return m_FrustumCount;
+    }
+    uint32_t OccludedCount() const
+    {
+        return m_OccludedCount;
     }
     uint32_t TotalCount() const
     {
@@ -45,9 +54,14 @@ class GpuCulling
         FrustumPlanes planes;
         glm::vec4 localSphere;
         glm::uvec4 settings; // first instance, count, material draw count, enabled
+        glm::mat4 clipFromScene;
+        glm::uvec4 hiZ; // viewport width/height, pyramid levels, enabled
     };
-    static_assert(sizeof(CullUniform) == 128, "std140 cull uniform layout mismatch");
+    static_assert(sizeof(CullUniform) == 208, "std140 cull uniform layout mismatch");
     const LogicalDevice &m_Device;
+    HiZ *m_HiZ = nullptr;
+    uint32_t m_FrustumCount = 0, m_OccludedCount = 0;
+    CullUniform m_LastUniform{};
     uint32_t m_First = 0, m_Count = 0, m_VisibleCount = 0;
     glm::vec4 m_LocalSphere{};
     std::vector<InstanceData> m_Instances;
@@ -55,7 +69,7 @@ class GpuCulling
     std::vector<uint32_t> m_Expected;
     bool m_Pending = false, m_Verify = false;
     bool m_CaptureVisible = false;
-    std::unique_ptr<Buffer> m_Visible, m_Indirect, m_Uniform, m_Readback;
+    std::unique_ptr<Buffer> m_Visible, m_Indirect, m_Uniform, m_Readback, m_Stats;
     VkDescriptorSetLayout m_SetLayout = VK_NULL_HANDLE;
     VkDescriptorPool m_Pool = VK_NULL_HANDLE;
     VkDescriptorSet m_Set = VK_NULL_HANDLE;

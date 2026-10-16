@@ -10,10 +10,10 @@ Image::Image(const PhysicalDevice& physicalDevice,
              VkImageTiling tiling,
              VkImageUsageFlags usage,
              VkMemoryPropertyFlags properties,
-             VkImageAspectFlags aspectFlags)
+             VkImageAspectFlags aspectFlags, uint32_t mipLevels)
     : m_PhysicalDevice(physicalDevice),
       m_LogicalDevice(logicalDevice),
-      m_Format(format)
+      m_Format(format), m_MipLevels(mipLevels)
 {
     CreateImage(width, height, format, tiling, usage, properties);
     CreateImageView(aspectFlags);
@@ -46,7 +46,7 @@ void Image::CreateImage(uint32_t width,
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
+    imageInfo.mipLevels = m_MipLevels;
     imageInfo.arrayLayers = 1;
     imageInfo.format = format;
     imageInfo.tiling = tiling;
@@ -87,7 +87,7 @@ void Image::CreateImageView(VkImageAspectFlags aspectFlags)
 
     viewInfo.subresourceRange.aspectMask = aspectFlags;
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.levelCount = m_MipLevels;
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 

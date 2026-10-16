@@ -16,6 +16,8 @@ add_executable(VulkanRenderingLab
     src/Core/GLTFLoader.cpp
     src/Core/InstancedScene.cpp
     src/Core/GpuCulling.cpp
+    src/Core/HiZ.cpp
+    src/Core/FrustumDebug.cpp
 
     src/Core/Window.h
     src/Core/Window.cpp
@@ -170,4 +172,11 @@ if(BUILD_TESTING)
     target_include_directories(FrustumTests PRIVATE src)
     target_link_libraries(FrustumTests PRIVATE glm::glm)
     add_test(NAME FrustumTests COMMAND FrustumTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(HiZTests tests/HiZTests.cpp)
+    target_include_directories(HiZTests PRIVATE src)
+    target_link_libraries(HiZTests PRIVATE glm::glm)
+    add_test(NAME HiZTests COMMAND HiZTests)
 endif()

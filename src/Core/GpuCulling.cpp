@@ -15,7 +15,7 @@ void CheckVk(VkResult result, const char *message)
 } // namespace
 
 GpuCulling::GpuCulling(const PhysicalDevice &physical, const LogicalDevice &device, const Buffer &input,
-                       const MeshData &mesh, bool verifyReadback)
+                       const MeshData &mesh, bool verifyReadback, HiZ *hiZ, VkDescriptorImageInfo fallback)
     : m_Device(device), m_Instances(verifyReadback ? mesh.instances : std::vector<InstanceData>{})
 {
     for (const auto &sub : mesh.subMeshes)
@@ -35,6 +35,7 @@ GpuCulling::GpuCulling(const PhysicalDevice &physical, const LogicalDevice &devi
         }
     if (!m_Count || size_t(m_First) + m_Count > mesh.instances.size() || m_Templates.size() * 20 > 65536)
         throw std::runtime_error("Invalid GPU culling group");
+    m_HiZ = hiZ;
     m_VisibleCount = m_Count;
     m_CaptureVisible = verifyReadback;
     try
@@ -51,24 +52,32 @@ GpuCulling::GpuCulling(const PhysicalDevice &physical, const LogicalDevice &devi
             gpu);
         m_Uniform = std::make_unique<Buffer>(physical, device, sizeof(CullUniform),
                                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, host);
+        m_Stats =
+            std::make_unique<Buffer>(physical, device, 16,
+                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                         VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                     gpu);
         m_Readback = std::make_unique<Buffer>(
-            physical, device, m_Indirect->GetSize() + (m_CaptureVisible ? m_Visible->GetSize() : 0),
+            physical, device, m_Indirect->GetSize() + 16 + (m_CaptureVisible ? m_Visible->GetSize() : 0),
             VK_BUFFER_USAGE_TRANSFER_DST_BIT, host);
-        const std::array<VkDescriptorSetLayoutBinding, 4> bindings{
+        const std::array<VkDescriptorSetLayoutBinding, 6> bindings{
             {{0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
              {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
              {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-             {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}}};
+             {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+             {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+             {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}}};
         VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layout.bindingCount = 4;
+        layout.bindingCount = 6;
         layout.pBindings = bindings.data();
         CheckVk(vkCreateDescriptorSetLayout(device.GetHandle(), &layout, nullptr, &m_SetLayout),
                 "Cannot create cull descriptor layout");
-        const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3},
-                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1}};
+        const VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4},
+                                              {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+                                              {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
         VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pool.maxSets = 1;
-        pool.poolSizeCount = 2;
+        pool.poolSizeCount = 3;
         pool.pPoolSizes = sizes;
         CheckVk(vkCreateDescriptorPool(device.GetHandle(), &pool, nullptr, &m_Pool),
                 "Cannot create cull descriptor pool");
@@ -81,18 +90,25 @@ GpuCulling::GpuCulling(const PhysicalDevice &physical, const LogicalDevice &devi
         const VkDescriptorBufferInfo infos[] = {{input.GetHandle(), 0, input.GetSize()},
                                                 {m_Visible->GetHandle(), 0, m_Visible->GetSize()},
                                                 {m_Indirect->GetHandle(), 0, m_Indirect->GetSize()},
-                                                {m_Uniform->GetHandle(), 0, sizeof(CullUniform)}};
-        std::array<VkWriteDescriptorSet, 4> writes{};
-        for (uint32_t i = 0; i < 4; ++i)
+                                                {m_Uniform->GetHandle(), 0, sizeof(CullUniform)},
+                                                {m_Stats->GetHandle(), 0, 16}};
+        const auto pyramid = m_HiZ ? m_HiZ->SampledPyramid() : fallback;
+        if (!pyramid.imageView || !pyramid.sampler)
+            throw std::runtime_error("Culling requires a valid fallback sampled texture");
+        std::array<VkWriteDescriptorSet, 6> writes{};
+        for (uint32_t i = 0; i < 6; ++i)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = m_Set;
             writes[i].dstBinding = i;
             writes[i].descriptorCount = 1;
             writes[i].descriptorType = bindings[i].descriptorType;
-            writes[i].pBufferInfo = &infos[i];
+            if (i == 4)
+                writes[i].pImageInfo = &pyramid;
+            else
+                writes[i].pBufferInfo = &infos[i == 5 ? 4 : i];
         }
-        vkUpdateDescriptorSets(device.GetHandle(), 4, writes.data(), 0, nullptr);
+        vkUpdateDescriptorSets(device.GetHandle(), 6, writes.data(), 0, nullptr);
         VkPipelineLayoutCreateInfo pipelineLayout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipelineLayout.setLayoutCount = 1;
         pipelineLayout.pSetLayouts = &m_SetLayout;
@@ -138,12 +154,13 @@ void GpuCulling::Release()
     if (m_SetLayout)
         vkDestroyDescriptorSetLayout(device, m_SetLayout, nullptr);
 }
-void GpuCulling::Update(const UniformBufferObject &ubo, bool enabled, bool verify)
+void GpuCulling::Update(const UniformBufferObject &ubo, bool enabled, bool verify, bool occlusion)
 {
     ReadCompleted(); // results belong to the previous frame, before its camera is replaced
     CullUniform uniform{
         ExtractFrustum(ubo.proj * ubo.view * ubo.model), m_LocalSphere,
-        glm::uvec4(m_First, m_Count, static_cast<uint32_t>(m_Templates.size()), enabled ? 1u : 0u)};
+        glm::uvec4(m_First, m_Count, static_cast<uint32_t>(m_Templates.size()), enabled ? 1u : 0u),
+        ubo.proj * ubo.view * ubo.model, m_HiZ ? m_HiZ->Settings(occlusion) : glm::uvec4(1, 1, 1, 0)};
     if (verify && !m_CaptureVisible)
         throw std::runtime_error("Visible-ID verification must be enabled at startup");
     m_Verify = verify;
@@ -153,6 +170,7 @@ void GpuCulling::Update(const UniformBufferObject &ubo, bool enabled, bool verif
             if (!enabled ||
                 SphereVisible(uniform.planes, TransformSphere(m_Instances[i].model, m_LocalSphere)))
                 m_Expected.push_back(i);
+    m_LastUniform = uniform;
     m_Uniform->UploadData(&uniform, sizeof(uniform));
 }
 void GpuCulling::Record(VkCommandBuffer cmd) const
@@ -168,6 +186,7 @@ void GpuCulling::Record(VkCommandBuffer cmd) const
                          VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &reuse,
                          0, nullptr, 0, nullptr);
     vkCmdUpdateBuffer(cmd, m_Indirect->GetHandle(), 0, m_Indirect->GetSize(), m_Templates.data());
+    vkCmdFillBuffer(cmd, m_Stats->GetHandle(), 0, 16, 0);
     VkMemoryBarrier reset{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     reset.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     reset.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
@@ -186,11 +205,13 @@ void GpuCulling::Record(VkCommandBuffer cmd) const
                          0, 1, &ready, 0, nullptr, 0, nullptr);
     VkBufferCopy copy{0, 0, m_Indirect->GetSize()};
     vkCmdCopyBuffer(cmd, m_Indirect->GetHandle(), m_Readback->GetHandle(), 1, &copy);
+    VkBufferCopy statistics{0, m_Indirect->GetSize(), 16};
+    vkCmdCopyBuffer(cmd, m_Stats->GetHandle(), m_Readback->GetHandle(), 1, &statistics);
     // Normal telemetry copies only the small command array. Full ID readback is
     // reserved for the explicitly enabled verification path.
     if (m_CaptureVisible)
     {
-        VkBufferCopy ids{0, m_Indirect->GetSize(), m_Visible->GetSize()};
+        VkBufferCopy ids{0, m_Indirect->GetSize() + 16, m_Visible->GetSize()};
         vkCmdCopyBuffer(cmd, m_Visible->GetHandle(), m_Readback->GetHandle(), 1, &ids);
     }
     VkMemoryBarrier host{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -218,13 +239,35 @@ void GpuCulling::ReadCompleted()
         if (std::memcmp(&expected, &commands[i], sizeof(expected)) != 0)
             throw std::runtime_error("GPU indirect command corruption/count mismatch");
     }
+    uint32_t stats[4]{};
+    std::memcpy(stats, bytes.data() + m_Indirect->GetSize(), 16);
+    m_FrustumCount = stats[0];
+    m_OccludedCount = stats[1];
+    if (m_FrustumCount > m_Count || m_OccludedCount > m_FrustumCount ||
+        m_VisibleCount + m_OccludedCount != m_FrustumCount)
+        throw std::runtime_error("GPU frustum/Hi-Z statistics mismatch");
     if (m_Verify)
     {
+        if (m_Expected.size() != m_FrustumCount)
+            throw std::runtime_error("GPU frustum count disagrees with CPU reference");
+        if (m_HiZ)
+        {
+            m_HiZ->ValidatePyramid();
+            if (m_LastUniform.hiZ.w != 0)
+            {
+                std::vector<uint32_t> retained;
+                for (auto id : m_Expected)
+                    if (!m_HiZ->OccludedCPU(TransformSphere(m_Instances[id].model, m_LocalSphere),
+                                            m_LastUniform.clipFromScene))
+                        retained.push_back(id);
+                m_Expected = std::move(retained);
+            }
+        }
         std::vector<uint32_t> ids(m_VisibleCount);
-        std::memcpy(ids.data(), bytes.data() + m_Indirect->GetSize(), ids.size() * 4);
+        std::memcpy(ids.data(), bytes.data() + m_Indirect->GetSize() + 16, ids.size() * 4);
         std::sort(ids.begin(), ids.end());
         if (ids != m_Expected)
-            throw std::runtime_error("GPU visible IDs disagree with CPU frustum reference");
+            throw std::runtime_error("GPU visible IDs disagree with CPU frustum/Hi-Z reference");
         std::cout << "[Culling Verify] exact visible-ID match: " << m_VisibleCount << " / " << m_Count
                   << std::endl;
     }

@@ -43,6 +43,11 @@ int main()
             auto c = glm::make_vec3(mesh.vertices[mesh.indices[i+2]].position);
             Check(glm::dot(glm::cross(b-a,c-a), a+b+c) > 0, "stress sphere winding is reversed");
         }
+        MeshData wallScene;
+        AppendOcclusionWall(wallScene);
+        Check(wallScene.vertices.size()==24 && wallScene.indices.size()==36,"occlusion wall geometry incorrect");
+        Check(wallScene.instances.size()==1 && wallScene.subMeshes[0].firstInstance==0 && wallScene.subMeshes[0].occluder,
+            "static occluder must use the identity direct-draw path");
         bool rejected = false;
         auto corrupt = mesh; corrupt.indices[0] = static_cast<uint32_t>(corrupt.vertices.size());
         try { MeshData scene; AppendInstancedMesh(scene, corrupt, grid); }

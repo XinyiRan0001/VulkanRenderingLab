@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform sampler2D sourceDepth;
+layout(r32f,binding=1) writeonly uniform image2D destination;
+layout(push_constant) uniform Parameters { ivec4 settings; } params;
+void main() {
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(pixel,imageSize(destination)))) return;
+    float depth=1.0;
+    if(params.settings.x!=0) {
+        if(all(lessThan(pixel,textureSize(sourceDepth,0)))) depth=texelFetch(sourceDepth,pixel,0).r;
+    } else {
+        depth=0.0;
+        ivec2 last=textureSize(sourceDepth,0)-1;
+        for(int y=0;y<2;++y) for(int x=0;x<2;++x)
+            depth=max(depth,texelFetch(sourceDepth,min(pixel*2+ivec2(x,y),last),0).r);
+    }
+    imageStore(destination,pixel,vec4(depth));
+}

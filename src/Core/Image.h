@@ -17,13 +17,14 @@ public:
           VkImageTiling tiling,
           VkImageUsageFlags usage,
           VkMemoryPropertyFlags properties,
-          VkImageAspectFlags aspectFlags);
+          VkImageAspectFlags aspectFlags, uint32_t mipLevels = 1);
 
     ~Image();
 
     Image(const Image&) = delete;
     Image& operator=(const Image&) = delete;
 
+    VkImage GetHandle() const { return m_Image; }
     VkImageView GetView() const { return m_ImageView; }
     VkFormat GetFormat() const { return m_Format; }
 
@@ -35,6 +36,7 @@ private:
     VkDeviceMemory m_Memory = VK_NULL_HANDLE;
     VkImageView m_ImageView = VK_NULL_HANDLE;
     VkFormat m_Format{};
+    uint32_t m_MipLevels = 1;
 
 private:
     void CreateImage(uint32_t width,

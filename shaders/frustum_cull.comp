@@ -5,7 +5,37 @@ struct DrawCommand { uint indexCount; uint instanceCount; uint firstIndex; int v
 layout(std430,binding=0) readonly buffer Input { InstanceData instances[]; };
 layout(std430,binding=1) writeonly buffer Visible { uint visibleIds[]; };
 layout(std430,binding=2) buffer Indirect { DrawCommand commands[]; };
-layout(std140,binding=3) uniform CullUniform { vec4 planes[6]; vec4 localSphere; uvec4 settings; } cull;
+layout(std140,binding=3) uniform CullUniform {
+    vec4 planes[6]; vec4 localSphere; uvec4 settings;
+    mat4 clipFromScene; uvec4 hiZ;
+} cull;
+layout(binding=4) uniform sampler2D depthPyramid;
+layout(std430,binding=5) buffer Statistics { uint frustumCount; uint occludedCount; uint nearBypassCount; uint reserved; } stats;
+
+bool FullyOccluded(vec3 center,float radius,out bool nearBypass) {
+    nearBypass=false;
+    vec2 lo=vec2(1e20),hi=vec2(-1e20);
+    float nearest=1.0;
+    for(int i=0;i<8;++i) {
+        vec3 direction=vec3((i&1)!=0?1.0:-1.0,(i&2)!=0?1.0:-1.0,(i&4)!=0?1.0:-1.0);
+        vec4 p=cull.clipFromScene*vec4(center+direction*radius,1);
+        if(p.w<=0.0 || p.z<=0.0) { nearBypass=true;return false; }
+        vec3 ndc=p.xyz/p.w;
+        lo=min(lo,ndc.xy);hi=max(hi,ndc.xy);nearest=min(nearest,ndc.z);
+    }
+    vec2 extent=vec2(cull.hiZ.xy);
+    lo=(lo*.5+.5)*extent;hi=(hi*.5+.5)*extent;
+    if(hi.x<0.0 || hi.y<0.0 || lo.x>=extent.x || lo.y>=extent.y) return false;
+    ivec2 last=ivec2(cull.hiZ.xy)-1;
+    ivec2 a=clamp(ivec2(floor(lo))-1,ivec2(0),last);
+    ivec2 b=clamp(ivec2(ceil(hi))+1,ivec2(0),last);
+    uint span=uint(max(b.x-a.x+1,b.y-a.y+1)),texels=1,mip=0;
+    while(texels<span && mip+1<cull.hiZ.z) { texels*=2;++mip; }
+    a/=int(texels);b/=int(texels);
+    float farthest=max(max(texelFetch(depthPyramid,a,int(mip)).r,texelFetch(depthPyramid,b,int(mip)).r),
+        max(texelFetch(depthPyramid,ivec2(a.x,b.y),int(mip)).r,texelFetch(depthPyramid,ivec2(b.x,a.y),int(mip)).r));
+    return nearest>farthest+1e-4;
+}
 
 void main() {
     uint offset=gl_GlobalInvocationID.x;
@@ -23,6 +53,12 @@ void main() {
     float radius=cull.localSphere.w*sqrt(norm1*normInf);
     if(cull.settings.w!=0) for(int i=0;i<6;++i)
         if(dot(cull.planes[i].xyz,center)+cull.planes[i].w < -radius-1e-4) return;
+    atomicAdd(stats.frustumCount,1);
+    if(cull.hiZ.w!=0) {
+        bool nearBypass;
+        if(FullyOccluded(center,radius,nearBypass)) { atomicAdd(stats.occludedCount,1);return; }
+        if(nearBypass) atomicAdd(stats.nearBypassCount,1);
+    }
     // A unique slot for each visible instance; execution order is not guaranteed.
     uint slot=atomicAdd(commands[0].instanceCount,1);
     visibleIds[slot]=id;

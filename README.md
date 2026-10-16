@@ -48,14 +48,14 @@ Press **C** to toggle frustum culling; the window title reports the most recentl
 completed frame's visible/total count. `--no-culling` runs GPU compaction in pass-through
 mode; `--verify-culling` additionally reads back exact visible IDs for comparison
 with an independent CPU frustum-test path. That mode is for correctness testing,
-not performance measurement. Normal telemetry copies only indirect commands.
+not performance measurement. Normal telemetry copies only indirect commands and small counter statistics.
 
 The tested fixed stress view reduced main-pass ball instances from **10000 to 3016**
 with **pixel-identical culling ON/OFF captures**; a camera shifted away produced
 zero instances correctly. These are workload counts, not a GPU speedup claim.
 GPU timestamps now include a Cull/Compact interval (reset, dispatch, dependencies
-and diagnostic copy) as well as shadow and main passes. No Hi-Z occlusion culling,
-transparent sorting, async compute, or multi-frame output ring is implemented.
+and diagnostic copy) as well as shadow and main passes. Hi-Z is available in the optional static-wall scene below. Transparent sorting,
+async compute and a multi-frame output ring are not implemented.
 
 The device selection requires a combined graphics+compute queue. Each indirect call
 has drawCount=1 and firstInstance=0, avoiding optional multi-draw/nonzero indirect
@@ -63,6 +63,52 @@ first-instance feature requirements. Explicit transfer/compute/vertex/indirect/h
 dependencies protect the outputs. Vulkan validation also prompted fixes to legacy
 IBL push-constant stages, render-pass depth/external dependencies and per-image
 present semaphores.
+
+## Current-frame Hi-Z occlusion culling
+
+An optional static-wall scene extends frustum culling with a current-frame depth
+prepass, a max-reduction depth pyramid and conservative Compute occlusion tests:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --occlusion-scene --paused
+```
+
+This starts a 1600-instance low-detail field with an opaque wall. **F8** toggles
+Hi-Z rejection; **C** independently toggles frustum rejection. The window title
+reports the latest completed frame's visible count and Hi-Z rejection count.
+`--no-occlusion` starts the comparison with Hi-Z rejection disabled. The wall
+prepass/pyramid still run in this mode, so it isolates rejection correctness,
+not the total cost of enabling the Hi-Z infrastructure.
+
+The prepass draws only explicit static opaque occluders, using the same camera
+and baked wall geometry as the main pass. A sampled D32 depth image feeds a
+compute-generated R32F pyramid. Its base is padded to power-of-two dimensions
+with far depth 1, preserving coverage at non-power-of-two viewport edges. Each
+subsequent mip stores the maximum of its 2x2 children for ordinary (non-reversed) Z.
+The culling shader projects a conservative sphere-enclosing box, expands its
+pixel rectangle, samples all covered cells at a selected mip, and rejects only
+when the bound's nearest depth is behind the entire region. Near/eye-plane
+crossing bounds bypass occlusion. Camera-frustum and Hi-Z rejection both feed
+the existing visible-ID and indirect-draw path; shadows continue drawing all instances.
+
+![Same visible image with Hi-Z off and on](docs/images/hiz-occlusion-comparison.png)
+
+In the fixed default wall view, frustum culling retained **854/1600** instances;
+Hi-Z rejected **92**, leaving **762** main-pass ball instances. Default, wall-edge
+and near-wall Hi-Z ON/OFF framebuffer captures were **pixel-identical**. These
+counts describe correctness/workload reduction, not a measured speedup. Timestamp
+output separately reports **HiZ Setup** (prepass, pyramid and optional verification
+copy), **Cull/Compact**, shadow, main and inclusive total time.
+
+`--verify-culling` checks every pyramid parent against its children and compares
+GPU visible IDs against CPU frustum/Hi-Z queries over the read-back pyramid. This
+path intentionally performs large readbacks and is unsuitable for performance
+measurement. Unit tests cover padding, conservative screen bounds, near/eye-plane
+bypass, depth tolerance and uncovered regions; 24 changing-camera frames passed
+Vulkan synchronization validation and complete ID checks. The comparison uses
+only the authored static wall, not temporal depth, dynamic occluders, alpha-tested
+materials or every scene object. There is no CPU-readback dependency for choosing
+this frame's draw count. Hi-Z resources are only allocated in the optional scene.
 
 ## Character and Material Lab
 
@@ -902,3 +948,24 @@ A recommended order for demonstrating the renderer:
 | Point Light | `U` | Move Up |
 | Point Light | `O` | Move Down |
 | Benchmark | `B` | Start GPU Benchmark |
+### Frozen culling camera observer
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --occlusion-scene --culling-observer --paused
+```
+
+The startup option snapshots the configured culling camera and moves the viewing
+camera aside. **F9** toggles frozen/live culling; mouse orbit and wheel zoom move
+the observer. **C** toggles frustum rejection, **F8** toggles Hi-Z rejection.
+Disable both to see all instances, then enable C and F8 in sequence. Missing
+objects in this mode are intentional: visibility belongs to the frozen camera,
+not to the observer. The yellow overlay shows that camera's frustum through
+scene geometry. For readability its rays are capped at 20 world units; this cap
+has no effect on the actual culling far plane. The title identifies FROZEN/LIVE.
+Hi-Z depth and frustum planes always use the same culling camera. Normal rendering
+and shading use the live observer. Shadow draws still include all instances.
+
+Observer validation: a 12-frame yaw sweep retained exactly the same 762 visible
+IDs while the observer moved; CPU/GPU verification passed every frame. Vulkan
+validation and synchronization validation reported no errors in this run.
+With both rejection switches disabled the same frozen camera retains all 1600.

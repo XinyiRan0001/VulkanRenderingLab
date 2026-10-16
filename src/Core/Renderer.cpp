@@ -109,6 +109,7 @@ void Renderer::DrawFrame()
 
             if (m_BenchmarkRunning)
             {
+                m_BenchmarkHiZAccumulator += timing.hiZPassMs;
                 m_BenchmarkCullingAccumulator += timing.cullingPassMs;
                 m_BenchmarkShadowAccumulator +=
                     timing.shadowPassMs;
@@ -182,6 +183,7 @@ void Renderer::DrawFrame()
                         << "\n"
                         << std::fixed
                         << std::setprecision(3)
+                        << "HiZ Setup:   " << m_BenchmarkHiZAccumulator / sampleCount << " ms\n"
                         << "Cull/Compact: " << m_BenchmarkCullingAccumulator / sampleCount << " ms\n"
                         << "Shadow Pass: "
                         << averageShadowMs
@@ -210,6 +212,7 @@ void Renderer::DrawFrame()
             // Regular 0.5-second GPU timing average
             // =========================================================
 
+            m_HiZTimingAccumulator += timing.hiZPassMs;
             m_CullingTimingAccumulator += timing.cullingPassMs;
             m_ShadowTimingAccumulator +=
                 timing.shadowPassMs;
@@ -249,7 +252,7 @@ void Renderer::DrawFrame()
                     << std::fixed
                     << std::setprecision(3)
                     << "[GPU Timing Average] "
-                    << "Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
+                    << "HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
                     << averageShadowMs
                     << " ms | Main: "
                     << averageMainMs
@@ -259,6 +262,7 @@ void Renderer::DrawFrame()
                     << m_GpuTimingSampleCount
                     << std::endl;
 
+                m_HiZTimingAccumulator = 0.0;
                 m_CullingTimingAccumulator = 0.0;
                 m_ShadowTimingAccumulator = 0.0;
                 m_MainTimingAccumulator = 0.0;
@@ -440,6 +444,7 @@ void Renderer::StartBenchmark(int shadowMode)
     m_BenchmarkStartTime =
         glfwGetTime();
 
+    m_BenchmarkHiZAccumulator = 0.0;
     m_BenchmarkCullingAccumulator = 0.0;
     m_BenchmarkShadowAccumulator = 0.0;
     m_BenchmarkMainAccumulator = 0.0;

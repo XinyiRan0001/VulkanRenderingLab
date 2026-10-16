@@ -39,6 +39,7 @@ private:
     int m_BenchmarkShadowMode = 0;
 
     double m_GpuTimingAccumulator = 0.0;
+    double m_HiZTimingAccumulator = 0.0;
     double m_CullingTimingAccumulator = 0.0;
     double m_ShadowTimingAccumulator = 0.0;
     double m_MainTimingAccumulator = 0.0;
@@ -52,6 +53,7 @@ private:
     double m_BenchmarkStartTime = 0.0;
     double m_BenchmarkDuration = 5.0;
 
+    double m_BenchmarkHiZAccumulator = 0.0;
     double m_BenchmarkCullingAccumulator = 0.0;
     double m_BenchmarkShadowAccumulator = 0.0;
     double m_BenchmarkMainAccumulator = 0.0;

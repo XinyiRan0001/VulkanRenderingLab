@@ -20,6 +20,8 @@
 #include "MeshData.h"
 #include "InstancedScene.h"
 #include "GpuCulling.h"
+#include "HiZ.h"
+#include "FrustumDebug.h"
 #include "TextureData.h"
 #include "TextureImage.h"
 #include "ShadowRenderPass.h"
@@ -52,7 +54,7 @@ const char* LightingViewName(int mode) {
 }
 }
 
-VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling)
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene)
     : m_Window(window)
 {
     // =========================================================
@@ -61,6 +63,7 @@ VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint3
 
     if (stressCount > 10000 || (stressCount && !scenePath.empty()))
         throw std::runtime_error("--stress-count accepts 1..10000 and cannot be combined with --scene");
+    if (occlusionScene && (!stressCount || !scenePath.empty())) throw std::runtime_error("Occlusion scene requires a stress grid");
     m_StressCount = stressCount;
     m_VerifyCulling = verifyCulling;
     CreateInstance();
@@ -503,6 +506,7 @@ m_GraphicsPipeline =
     for (auto& material : materialBallMesh.materials) material.hasDiffuseTexture = false;
     const auto instances = CreateMaterialInstances(stressCount);
     AppendInstancedMesh(combinedMesh, materialBallMesh, instances);
+    if (occlusionScene) AppendOcclusionWall(combinedMesh);
     const uint64_t geometryBytes = materialBallMesh.vertices.size() * sizeof(Vertex) +
         materialBallMesh.indices.size() * sizeof(uint32_t);
     std::cout << "[Instancing] Objects: " << instances.size()
@@ -524,6 +528,7 @@ m_GraphicsPipeline =
         m_CameraTarget = glm::vec3(0.0f, 0.6f, 0.0f);
         m_CameraDistance = std::max(8.0f, std::ceil(std::sqrt(float(stressCount))) * 0.8f);
     }
+    if (occlusionScene) m_CameraDistance=8.0f;
     m_DefaultCameraDistance = m_CameraDistance;
     std::cout
         << "[Scene] Combined vertices: "
@@ -1169,8 +1174,11 @@ m_GraphicsPipeline =
         instanceBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     m_InstanceBuffer->UploadData(combinedMesh.instances.data(), instanceBytes);
+    if (m_StressCount) m_FrustumDebug = std::make_unique<FrustumDebug>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent());
+    if (occlusionScene) m_HiZ=std::make_unique<HiZ>(*m_PhysicalDevice,*m_LogicalDevice,m_Swapchain->GetExtent(),combinedMesh,m_VerifyCulling);
     if (combinedMesh.instances.size() > 1)
-        m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling);
+        m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling,m_HiZ.get(),
+            VkDescriptorImageInfo{m_BRDFLUT->GetSampler(),m_BRDFLUT->GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
     m_DescriptorManager =
     std::make_unique<DescriptorManager>(
         *m_LogicalDevice,
@@ -1224,7 +1232,7 @@ m_GraphicsPipeline =
             *m_DescriptorManager,
             combinedMesh.subMeshes,
             combinedMesh.materials,
-            m_GpuCulling.get()
+            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get()
         );
 
     std::cout
@@ -1385,6 +1393,15 @@ void VulkanContext::SetupCameraControls()
             }
 
             if (action == GLFW_PRESS) {
+                if (key == GLFW_KEY_F9 && context->m_FrustumDebug) {
+                    context->m_CullingFrozen = !context->m_CullingFrozen;
+                    context->m_FrozenCameraValid = false;
+                    std::cout << "[Observer] " << (context->m_CullingFrozen ? "FROZEN: orbit to inspect, C / F8 toggle rejection" : "LIVE: culling follows camera") << std::endl;
+                }
+                if (key == GLFW_KEY_F8 && context->m_HiZ) {
+                    context->m_OcclusionEnabled=!context->m_OcclusionEnabled;
+                    std::cout << "[Hi-Z] " << (context->m_OcclusionEnabled ? "ON" : "OFF") << std::endl;
+                }
                 if (key == GLFW_KEY_C) {
                     context->m_CullingEnabled = !context->m_CullingEnabled;
                     std::cout << "[GPU Culling] " << (context->m_CullingEnabled ? "ON" : "OFF") << std::endl;
@@ -1671,6 +1688,8 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
 
     if (m_GpuCulling) title << " | Cull " << (m_CullingEnabled ? "ON " : "OFF ")
         << m_GpuCulling->VisibleCount() << "/" << m_GpuCulling->TotalCount();
+    if (m_FrustumDebug) title << " | Camera " << (m_CullingFrozen ? "FROZEN [F9]" : "LIVE [F9]");
+    if (m_HiZ) title << " | HiZ " << (m_OcclusionEnabled ? "ON" : "OFF") << " hidden " << m_GpuCulling->OccludedCount();
     glfwSetWindowTitle(
         m_Window.GetHandle(),
         title.str().c_str()
@@ -2943,6 +2962,8 @@ VulkanContext::~VulkanContext()
     m_HDRTextureImage.reset();
 
     m_GpuCulling.reset();
+    m_HiZ.reset();
+    m_FrustumDebug.reset();
     m_InstanceBuffer.reset();
     m_UniformBuffer.reset();
     m_IndexBuffer.reset();
@@ -3577,7 +3598,14 @@ void VulkanContext::UpdateUniformBuffer()
         lightProjection *
         lightView;
 
-    if (m_GpuCulling) m_GpuCulling->Update(ubo,m_CullingEnabled,m_VerifyCulling);
+    if (!m_CullingFrozen || !m_FrozenCameraValid) {
+        m_FrozenCamera = ubo;
+        m_FrozenCameraValid = true;
+    }
+    const auto& cullingCamera = m_CullingFrozen ? m_FrozenCamera : ubo;
+    if (m_HiZ) m_HiZ->Update(cullingCamera);
+    if (m_GpuCulling) m_GpuCulling->Update(cullingCamera,m_CullingEnabled,m_VerifyCulling,m_OcclusionEnabled);
+    if (m_FrustumDebug) m_FrustumDebug->Update(ubo,cullingCamera,m_CullingFrozen);
     // Uniform updates and readback happen only after the preceding render fence.
     m_UniformBuffer->UploadData(
         &ubo,
@@ -3646,6 +3674,7 @@ void VulkanContext::FinishDiagnostics() {
     if (m_GpuCulling) {
         m_GpuCulling->ReadCompleted();
         std::cout << "[GPU Culling] Visible: " << m_GpuCulling->VisibleCount() << " / " << m_GpuCulling->TotalCount()
+            << " | frustum survivors: " << m_GpuCulling->FrustumCount() << " | Hi-Z occluded: " << m_GpuCulling->OccludedCount()
             << " | enabled: " << m_CullingEnabled << " | shadows: all instances" << std::endl;
     }
 }
@@ -3655,4 +3684,14 @@ void VulkanContext::ConfigureCullingCamera(float distance, float targetOffsetX) 
         throw std::runtime_error("Invalid diagnostic camera distance/offset");
     if(distance>0.0f) m_CameraDistance=distance;
     m_CameraTarget.x+=targetOffsetX;
+}
+
+void VulkanContext::StartCullingObserver() {
+    if (!m_FrustumDebug) throw std::runtime_error("--culling-observer requires --occlusion-scene or --stress-count");
+    UpdateUniformBuffer();
+    m_CullingFrozen = true;
+    m_CameraYaw += glm::radians(65.0f);
+    m_CameraPitch = glm::radians(30.0f);
+    m_CameraDistance *= 2.2f;
+    std::cout << "[Observer] Frozen culling camera; observer moved aside. F9: live/frozen, C: frustum, F8: Hi-Z." << std::endl;
 }

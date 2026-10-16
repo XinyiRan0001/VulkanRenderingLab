@@ -21,6 +21,7 @@ struct SubMesh
     int materialId = -1;
     uint32_t instanceCount = 1;
     uint32_t firstInstance = 0;
+    bool occluder = false;
     glm::vec4 localSphere{0.0f}; // prototype bounds, before instance/global transforms
 };
 
