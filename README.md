@@ -110,6 +110,72 @@ only the authored static wall, not temporal depth, dynamic occluders, alpha-test
 materials or every scene object. There is no CPU-readback dependency for choosing
 this frame's draw count. Hi-Z resources are only allocated in the optional scene.
 
+## Hi-Z depth and single-instance inspector
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --occlusion-scene --hiz-inspector --paused
+```
+
+**F10** toggles the inspector. **Page Up / Page Down** cycle raw wall depth and
+pyramid mips 0..11 at the default resolution. **Tab / Shift+Tab** select the
+next/previous sphere. `--inspect-instance 820` selects a zero-based sphere offset;
+`--hiz-mip -1` previews raw depth, and `--hiz-mip 7` previews pyramid level 7.
+Add `--culling-observer` to inspect the selected bound from an independent view.
+Existing **C**, **F8**, **F9** controls remain available.
+
+![Hi-Z mip and selected sphere diagnostic](docs/images/hiz-inspector.png)
+
+The inset shows only the explicitly authored wall depth, not full scene depth.
+Purple marks power-of-two padding (stored as far depth 1). Grayscale is remapped
+for contrast; the printed NEAR/MAX values and comparisons use unmodified device
+depth. Coarse mips show texel boundaries. The yellow world-space box marks the
+selected conservative bound, cyan marks its expanded projected rectangle, and
+the status-colored rectangle marks the query cells' full coverage.
+
+**Preview mip** is a manual display choice; **query mip** is selected automatically
+from the bound size, spanning at most 2x2 cells. They are independent. The selected
+query compares its nearest depth with the maximum depth of those cells:
+`NEAR > MAX + 0.000100` means geometrically covered. In the fixed default view,
+sphere 820 queries mip 7: **0.987150 > 0.983882 + 0.000100**, matching actual rejection.
+
+Red means Hi-Z rejected, green means retained, orange means frustum rejected,
+and gray means a near/eye-plane or offscreen query was bypassed. Invalid queries
+show N/A. With F8 off the geometric query is still visible but cannot reject the
+sphere; the HIZ OFF label distinguishes that case. Retained means present in the
+instance draw list, not necessarily producing pixels after ordinary rasterization.
+
+The diagnostic independently uses the CPU reference footprint and a one-thread
+GPU query of the current pyramid; it never modifies culling outputs. Normal
+inspection reads back only 16 diagnostic bytes after the frame fence. With
+`--verify-culling`, sampled depth is checked against the CPU pyramid reference and
+the decision against the actual GPU visible-ID list. Raw/mip 0/7/11 captures,
+36 moving-camera frames and 12 frozen-camera observer frames passed these checks
+and Vulkan synchronization validation. Inspector-off benchmark paths still
+produce pixel-identical direct/frustum/Hi-Z captures at all three fixed views.
+The inspector dispatch and overlay are omitted when off and during benchmarks.
+
+## Automated culling performance benchmark
+
+```powershell
+.\tools\benchmark-culling.ps1
+```
+
+Tests 1600 / 6400 / 10000 instances at three fixed viewing angles. Each mode
+gets its own warmup and three rotated repetitions, exporting per-frame CSV and
+mean/median/p95 summaries. Unlike interactive C/F8 toggles, the direct baseline
+skips compute culling entirely and the frustum-only path skips the complete
+Hi-Z depth prepass and pyramid. Inputs are locked and light animation is paused.
+
+On one RTX 4050 Laptop GPU run at 1280 x 720, the 10000-instance front view
+averaged **2.643 ms direct**, **2.273 ms frustum**, **2.264 ms frustum + Hi-Z**.
+The incremental Hi-Z difference is too small to establish a benefit; edge and
+side views often became slower with Hi-Z. These are local GPU execution timings,
+not end-to-end FPS or a universal speedup claim.
+
+See [measurement conditions, all views and summary CSV](docs/benchmarks/README.md)
+for the results and reproduction commands. Five tests pass; separate validation
+runs produced pixel-identical direct/frustum/Hi-Z captures at 1600 instances for all three views.
+
 ## Character and Material Lab
 
 The default scene retains the existing character and ten material test objects.

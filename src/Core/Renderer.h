@@ -24,6 +24,7 @@ public:
     void CaptureNextFrame(const std::string& path) { m_CapturePath = path; }
     void WaitForFrame() const;
     void StartBenchmark(int shadowMode);
+    void SetQuiet(bool quiet) { m_Quiet = quiet; }
 
 private:
     const LogicalDevice& m_LogicalDevice;
@@ -36,6 +37,7 @@ private:
 
     std::string m_CapturePath;
     bool m_HasSubmittedFrame = false;
+    bool m_Quiet = false;
     int m_BenchmarkShadowMode = 0;
 
     double m_GpuTimingAccumulator = 0.0;

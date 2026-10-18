@@ -21,6 +21,7 @@
 #include <vector>
 #include "GpuCulling.h"
 #include "HiZ.h"
+#include "HiZInspector.h"
 #include "FrustumDebug.h"
 
 class CommandManager
@@ -51,7 +52,7 @@ public:
         const DescriptorManager& descriptorManager,
         const std::vector<SubMesh>& subMeshes,
         const std::vector<MaterialData>& materials,
-        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr
+        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr
     );
     ~CommandManager();
 
@@ -74,6 +75,9 @@ public:
 
     void CaptureFrame(uint32_t imageIndex, const std::string& path) const;
     void SetSkyboxEnabled(bool enabled);
+    void SetInspectorEnabled(bool enabled);
+    void SetBenchmarkMode(int mode); // 0 direct, 1 frustum, 2 frustum + full Hi-Z
+
 
 private:
     const LogicalDevice& m_LogicalDevice;
@@ -93,6 +97,8 @@ private:
     GpuCulling* m_Culling = nullptr;
     HiZ* m_HiZ = nullptr;
     FrustumDebug* m_Debug = nullptr;
+    HiZInspector* m_Inspector = nullptr;
+    bool m_InspectorEnabled = false;
     std::vector<SubMesh> m_SubMeshes;
     std::vector<MaterialData> m_Materials;
 
@@ -103,6 +109,8 @@ private:
 
     std::vector<VkCommandBuffer> m_CommandBuffers;
     bool m_SkyboxEnabled = true;
+    bool m_RunCulling = true, m_RunHiZ = true;
+    bool m_BenchmarkMode = false;
 
 private:
     void CreateCommandPool();

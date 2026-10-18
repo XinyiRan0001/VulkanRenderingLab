@@ -26,10 +26,12 @@ class GpuCulling
     }
     void Update(const UniformBufferObject &, bool enabled, bool verify, bool occlusion = true);
     void Record(VkCommandBuffer) const;
+    void SetHiZSampling(bool enabled); // caller waits for all GPU use first
     void MarkSubmitted()
     {
         m_Pending = true;
     }
+    bool VerifiedVisible(uint32_t id) const;
     void ReadCompleted(); // caller must have waited for the render fence
     uint32_t VisibleCount() const
     {
@@ -60,13 +62,14 @@ class GpuCulling
     static_assert(sizeof(CullUniform) == 208, "std140 cull uniform layout mismatch");
     const LogicalDevice &m_Device;
     HiZ *m_HiZ = nullptr;
+    VkDescriptorImageInfo m_Fallback{};
     uint32_t m_FrustumCount = 0, m_OccludedCount = 0;
     CullUniform m_LastUniform{};
     uint32_t m_First = 0, m_Count = 0, m_VisibleCount = 0;
     glm::vec4 m_LocalSphere{};
     std::vector<InstanceData> m_Instances;
     std::vector<VkDrawIndexedIndirectCommand> m_Templates;
-    std::vector<uint32_t> m_Expected;
+    std::vector<uint32_t> m_Expected, m_VerifiedIds;
     bool m_Pending = false, m_Verify = false;
     bool m_CaptureVisible = false;
     std::unique_ptr<Buffer> m_Visible, m_Indirect, m_Uniform, m_Readback, m_Stats;

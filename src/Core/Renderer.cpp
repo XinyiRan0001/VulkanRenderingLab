@@ -5,7 +5,6 @@
 #include <stdexcept>
 #include <GLFW/glfw3.h>
 
-
 Renderer::Renderer(const LogicalDevice& logicalDevice,
     const Swapchain& swapchain,
     const CommandManager& commandManager)
@@ -72,7 +71,6 @@ void Renderer::WaitForFrame() const
 
 void Renderer::DrawFrame()
 {
-    std::cout << "[DrawFrame] Begin" << std::endl;
 
     VkDevice device = m_LogicalDevice.GetHandle();
 
@@ -83,11 +81,6 @@ void Renderer::DrawFrame()
         VK_TRUE,
         UINT64_MAX
     );
-
-    std::cout
-        << "[DrawFrame] Fence wait result: "
-        << static_cast<int>(waitResult)
-        << std::endl;
 
     if (waitResult != VK_SUCCESS)
     {
@@ -228,7 +221,7 @@ void Renderer::DrawFrame()
             const double currentTime =
                 glfwGetTime();
 
-            if (currentTime -
+            if (!m_Quiet && currentTime -
                 m_LastGpuTimingPrintTime >= 0.5)
             {
                 const double sampleCount =
@@ -286,15 +279,9 @@ void Renderer::DrawFrame()
         &imageIndex
     );
 
-    std::cout
-    << "[DrawFrame] Acquire result: "
-    << static_cast<int>(acquireResult)
-    << ", image index: "
-    << imageIndex
-    << std::endl;
-
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
+        if (m_Quiet) throw std::runtime_error("Swapchain changed during benchmark; rerun with a fixed window");
         return;
     }
 
@@ -359,19 +346,12 @@ void Renderer::DrawFrame()
     submitInfo.pSignalSemaphores =
         signalSemaphores;
 
-    std::cout << "[DrawFrame] Before queue submit" << std::endl;
-
     VkResult submitResult = vkQueueSubmit(
         m_LogicalDevice.GetGraphicsQueue(),
         1,
         &submitInfo,
         m_InFlightFence
     );
-
-    std::cout
-    << "[DrawFrame] Submit result: "
-    << static_cast<int>(submitResult)
-    << std::endl;
 
     if (submitResult != VK_SUCCESS)
     {
@@ -408,23 +388,17 @@ void Renderer::DrawFrame()
     presentInfo.pImageIndices =
         &imageIndex;
 
-    std::cout << "[DrawFrame] Before present" << std::endl;
     VkResult presentResult =
         vkQueuePresentKHR(
             m_LogicalDevice.GetPresentQueue(),
             &presentInfo
         );
-    std::cout
-        << "[DrawFrame] Present result: "
-        << static_cast<int>(presentResult)
-        << std::endl;
     if (presentResult != VK_SUCCESS)
     {
         throw std::runtime_error(
             "Failed to present swapchain image."
         );
     }
-    std::cout << "[DrawFrame] End" << std::endl;
 }
 
 void Renderer::StartBenchmark(int shadowMode)

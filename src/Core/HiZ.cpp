@@ -108,7 +108,7 @@ HiZ::HiZ(const PhysicalDevice &physical, const LogicalDevice &device, VkExtent2D
         VkSubpassDependency dependencies[2]{};
         dependencies[0] = {VK_SUBPASS_EXTERNAL,
                            0,
-                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
                                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
                            VK_ACCESS_SHADER_READ_BIT,
@@ -118,7 +118,7 @@ HiZ::HiZ(const PhysicalDevice &physical, const LogicalDevice &device, VkExtent2D
                            VK_SUBPASS_EXTERNAL,
                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
                                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                            VK_ACCESS_SHADER_READ_BIT,
                            0};
@@ -355,7 +355,7 @@ void HiZ::Record(VkCommandBuffer cmd, const Buffer &vertices, const Buffer &indi
     init.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, m_Levels, 0, 1};
     init.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
     init.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &init);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_ReducePipeline);
     for (uint32_t level = 0; level < m_Levels; ++level)

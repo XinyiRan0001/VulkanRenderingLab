@@ -27,7 +27,7 @@ FrustumDebug::FrustumDebug(const PhysicalDevice &physical, const LogicalDevice &
     : m_Device(device)
 {
     m_Vertices =
-        std::make_unique<Buffer>(physical, device, 24 * sizeof(glm::vec4), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        std::make_unique<Buffer>(physical, device, 48 * sizeof(glm::vec4), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     const auto d = device.GetHandle();
     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -97,9 +97,9 @@ FrustumDebug::~FrustumDebug()
     vkDestroyPipelineLayout(m_Device.GetHandle(), m_Layout, nullptr);
 }
 void FrustumDebug::Update(const UniformBufferObject &observer, const UniformBufferObject &culling,
-                          bool enabled)
+                          bool enabled, glm::vec4 sphere, bool inspect)
 {
-    std::array<glm::vec4, 24> lines;
+    std::array<glm::vec4, 48> lines;
     // Clip-space points outside the viewport make the fixed draw invisible when disabled.
     lines.fill(glm::vec4(2, 2, 0, 1));
     if (enabled)
@@ -127,6 +127,24 @@ void FrustumDebug::Update(const UniformBufferObject &observer, const UniformBuff
                     lines[vertex++] = corners[i | bit];
                 }
     }
+    if (inspect)
+    {
+        const auto clip = observer.proj * observer.view * observer.model;
+        std::array<glm::vec4, 8> corners;
+        for (int i = 0; i < 8; ++i)
+        {
+            const glm::vec3 sign((i & 1) ? 1.f : -1.f, (i & 2) ? 1.f : -1.f, (i & 4) ? 1.f : -1.f);
+            corners[i] = clip * glm::vec4(glm::vec3(sphere) + sign * sphere.w, 1);
+        }
+        int vertex = 24;
+        for (int i = 0; i < 8; ++i)
+            for (int bit = 1; bit <= 4; bit *= 2)
+                if (!(i & bit))
+                {
+                    lines[vertex++] = corners[i];
+                    lines[vertex++] = corners[i | bit];
+                }
+    }
     m_Vertices->UploadData(lines.data(), sizeof(lines));
 }
 void FrustumDebug::Record(VkCommandBuffer cmd) const
@@ -135,5 +153,5 @@ void FrustumDebug::Record(VkCommandBuffer cmd) const
     VkBuffer buffer = m_Vertices->GetHandle();
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer, &offset);
-    vkCmdDraw(cmd, 24, 1, 0, 0);
+    vkCmdDraw(cmd, 48, 1, 0, 0);
 }

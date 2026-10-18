@@ -17,6 +17,8 @@ add_executable(VulkanRenderingLab
     src/Core/InstancedScene.cpp
     src/Core/GpuCulling.cpp
     src/Core/HiZ.cpp
+    src/Core/HiZInspector.cpp
+    src/Core/CullingBenchmark.cpp
     src/Core/FrustumDebug.cpp
 
     src/Core/Window.h
@@ -179,4 +181,10 @@ if(BUILD_TESTING)
     target_include_directories(HiZTests PRIVATE src)
     target_link_libraries(HiZTests PRIVATE glm::glm)
     add_test(NAME HiZTests COMMAND HiZTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(BenchmarkStatsTests tests/BenchmarkStatsTests.cpp)
+    target_include_directories(BenchmarkStatsTests PRIVATE src)
+    add_test(NAME BenchmarkStatsTests COMMAND BenchmarkStatsTests)
 endif()

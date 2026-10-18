@@ -10,6 +10,9 @@ int main(int argc, char** argv)
     try
     {
         std::string scenePath;
+        std::string benchmarkPath;
+        bool benchmarkCaptures=false;
+        int benchmarkWarmup=30, benchmarkSamples=120, benchmarkRepeats=3;
         int frameLimit = 0;
         uint32_t stressCount = 0;
         std::string capturePath;
@@ -17,6 +20,8 @@ int main(int argc, char** argv)
         float yaw = 0.0f, pitch = 8.594367f;
         bool paused = false;
         bool cullingObserver = false;
+        bool hiZInspector=false;
+        int inspectInstance=-1, inspectMip=0;
         bool culling = true, verifyCulling = false;
         bool occlusionScene=false,occlusion=true,pitchSpecified=false;
         float cameraDistance=0.0f, targetOffsetX=0.0f, cameraSweep=0.0f;
@@ -24,7 +29,12 @@ int main(int argc, char** argv)
         float environmentDegrees = 0.0f;
         for (int i = 1; i < argc; ++i) {
             const std::string option = argv[i];
-            if (option == "--scene" && i + 1 < argc) scenePath = argv[++i];
+            if (option == "--benchmark-culling" && i+1<argc) benchmarkPath=argv[++i];
+            else if (option == "--benchmark-captures") benchmarkCaptures=true;
+            else if (option == "--benchmark-warmup" && i+1<argc) benchmarkWarmup=std::stoi(argv[++i]);
+            else if (option == "--benchmark-samples" && i+1<argc) benchmarkSamples=std::stoi(argv[++i]);
+            else if (option == "--benchmark-repeats" && i+1<argc) benchmarkRepeats=std::stoi(argv[++i]);
+            else if (option == "--scene" && i + 1 < argc) scenePath = argv[++i];
             else if (option == "--stress-count" && i + 1 < argc) {
                 const int count = std::stoi(argv[++i]);
                 if (count < 1 || count > 10000) throw std::runtime_error("--stress-count must be 1..10000");
@@ -37,6 +47,9 @@ int main(int argc, char** argv)
             else if (option == "--camera-sweep" && i+1<argc) cameraSweep=std::stof(argv[++i]);
             else if (option == "--camera-distance" && i+1<argc) cameraDistance=std::stof(argv[++i]);
             else if (option == "--target-offset-x" && i+1<argc) targetOffsetX=std::stof(argv[++i]);
+            else if (option == "--hiz-inspector") hiZInspector=true;
+            else if (option == "--inspect-instance" && i+1<argc) { inspectInstance=std::stoi(argv[++i]);hiZInspector=true; }
+            else if (option == "--hiz-mip" && i+1<argc) { inspectMip=std::stoi(argv[++i]);hiZInspector=true; }
             else if (option == "--occlusion-scene") occlusionScene=true;
             else if (option == "--culling-observer") cullingObserver = true;
             else if (option == "--no-occlusion") occlusion=false;
@@ -49,7 +62,14 @@ int main(int argc, char** argv)
             else if (option == "--frames" && i + 1 < argc) {
                 frameLimit = std::stoi(argv[++i]);
                 if (frameLimit <= 0) throw std::runtime_error("--frames must be positive");
-            } else throw std::runtime_error("Usage: VulkanRenderingLab [--scene path.gltf|path.glb] [--frames count] [--stress-count 1..10000] [--occlusion-scene] [--culling-observer] [--no-occlusion] [--no-culling] [--verify-culling] [--camera-distance value] [--target-offset-x value] [--material-view 0..5] [--lighting-view 0..3] [--environment-degrees angle]");
+            } else throw std::runtime_error("Usage: VulkanRenderingLab [--scene path.gltf|path.glb] [--frames count] [--stress-count 1..10000] [--benchmark-culling output.csv] [--benchmark-warmup 30] [--benchmark-samples 120] [--benchmark-repeats 3] [--benchmark-captures] [--occlusion-scene] [--hiz-inspector] [--hiz-mip -1..11] [--inspect-instance offset] [--culling-observer] [--no-occlusion] [--no-culling] [--verify-culling] [--camera-distance value] [--target-offset-x value] [--material-view 0..5] [--lighting-view 0..3] [--environment-degrees angle]");
+        }
+        if (!benchmarkPath.empty()) {
+            if (!scenePath.empty() || cullingObserver || hiZInspector || verifyCulling || frameLimit || cameraSweep!=0 || !capturePath.empty())
+                throw std::runtime_error("Culling benchmark cannot combine scene, observer, verification, frames, sweep or capture");
+            if (benchmarkWarmup<1 || benchmarkSamples<2 || benchmarkRepeats<1 || benchmarkRepeats>20 || benchmarkWarmup>10000 || benchmarkSamples>10000)
+                throw std::runtime_error("Invalid benchmark warmup (1..10000), samples (2..10000), repeats (1..20)");
+            occlusionScene=true; paused=true;
         }
         if (cameraSweep!=0.0f && !frameLimit) throw std::runtime_error("--camera-sweep requires a bounded --frames run");
         if (occlusionScene && !stressCount) stressCount=1600;
@@ -61,6 +81,9 @@ int main(int argc, char** argv)
         context.SetInspection(materialView, lightingView, environmentDegrees);
         context.ConfigureShadowDiagnostic(shadowMode, yaw, pitch, paused);
         context.ConfigureCullingCamera(cameraDistance,targetOffsetX);
+        if (!benchmarkPath.empty()) { context.RunCullingBenchmark(benchmarkPath,benchmarkWarmup,benchmarkSamples,benchmarkRepeats,benchmarkCaptures); return EXIT_SUCCESS; }
+        if (inspectInstance< -1) throw std::runtime_error("--inspect-instance must be a zero-based sphere offset");
+        context.ConfigureHiZInspector(hiZInspector,inspectInstance,inspectMip);
         if (cullingObserver) context.StartCullingObserver();
         if (!capturePath.empty()) context.CaptureNextFrame(capturePath);
         int frames = 0;

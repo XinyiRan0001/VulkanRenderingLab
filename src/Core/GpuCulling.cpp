@@ -36,6 +36,7 @@ GpuCulling::GpuCulling(const PhysicalDevice &physical, const LogicalDevice &devi
     if (!m_Count || size_t(m_First) + m_Count > mesh.instances.size() || m_Templates.size() * 20 > 65536)
         throw std::runtime_error("Invalid GPU culling group");
     m_HiZ = hiZ;
+    m_Fallback = fallback;
     m_VisibleCount = m_Count;
     m_CaptureVisible = verifyReadback;
     try
@@ -266,9 +267,23 @@ void GpuCulling::ReadCompleted()
         std::vector<uint32_t> ids(m_VisibleCount);
         std::memcpy(ids.data(), bytes.data() + m_Indirect->GetSize() + 16, ids.size() * 4);
         std::sort(ids.begin(), ids.end());
+        m_VerifiedIds = ids;
         if (ids != m_Expected)
             throw std::runtime_error("GPU visible IDs disagree with CPU frustum/Hi-Z reference");
         std::cout << "[Culling Verify] exact visible-ID match: " << m_VisibleCount << " / " << m_Count
                   << std::endl;
     }
+}
+
+void GpuCulling::SetHiZSampling(bool enabled) {
+    const auto image = enabled && m_HiZ ? m_HiZ->SampledPyramid() : m_Fallback;
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstSet=m_Set; write.dstBinding=4; write.descriptorCount=1;
+    write.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; write.pImageInfo=&image;
+    vkUpdateDescriptorSets(m_Device.GetHandle(),1,&write,0,nullptr);
+}
+
+bool GpuCulling::VerifiedVisible(uint32_t id) const {
+    if (!m_Verify) throw std::runtime_error("Exact instance visibility requires --verify-culling");
+    return std::binary_search(m_VerifiedIds.begin(),m_VerifiedIds.end(),id);
 }

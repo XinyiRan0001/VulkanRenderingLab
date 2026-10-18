@@ -1,0 +1,18 @@
+#version 450
+layout(local_size_x=1) in;
+layout(binding=0) uniform sampler2D pyramid;
+layout(std140,binding=2) uniform Settings { ivec4 region; ivec4 query; vec4 depths; ivec4 view; vec4 pixels; ivec4 selection; } s;
+layout(std430,binding=3) buffer Result { vec4 result; };
+void main() {
+    float farthest=1.0;
+    if(s.query.y!=0) {
+        ivec2 a=s.region.xy,b=s.region.zw;
+        int mip=s.query.x;
+        farthest=max(max(texelFetch(pyramid,a,mip).r,texelFetch(pyramid,b,mip).r),
+                     max(texelFetch(pyramid,ivec2(a.x,b.y),mip).r,texelFetch(pyramid,ivec2(b.x,a.y),mip).r));
+    }
+    bool covered=s.query.y!=0 && s.depths.x>farthest+s.depths.w;
+    // Actual decision includes enabled switches, while covered is the geometric test alone.
+    float state=s.query.z!=0 ? 0.0 : (s.query.y==0 ? 1.0 : (covered && s.query.w!=0 ? 3.0 : 2.0));
+    result=vec4(s.depths.x,farthest,covered?1.0:0.0,state);
+}

@@ -36,6 +36,7 @@ class CommandManager;
 class Renderer;
 class GpuCulling;
 class HiZ;
+class HiZInspector;
 class FrustumDebug;
 class GraphicsPipeline;
 class Buffer;
@@ -65,6 +66,8 @@ public:
     void CaptureNextFrame(const std::string& path);
     void ConfigureCullingCamera(float distance, float targetOffsetX);
     void StartCullingObserver();
+    void ConfigureHiZInspector(bool enabled, int instance = -1, int mip = 0);
+    void RunCullingBenchmark(const std::string& path, int warmup, int samples, int repeats, bool captures = false);
     void SetOcclusion(bool enabled) { m_OcclusionEnabled=enabled; }
     void SetCulling(bool enabled, bool verify);
     void FinishDiagnostics();
@@ -97,6 +100,7 @@ private:
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<Buffer> m_InstanceBuffer;
     std::unique_ptr<HiZ> m_HiZ;
+    std::unique_ptr<HiZInspector> m_HiZInspector;
     std::unique_ptr<GpuCulling> m_GpuCulling;
     std::unique_ptr<TextureImage> m_TextureImage;
     std::vector<std::unique_ptr<TextureImage>> m_MaterialImages;
@@ -151,6 +155,7 @@ private:
     int m_MaterialView = 0;
     int m_LightingView = 0;
     float m_EnvironmentRotation = 0.0f;
+    bool m_BenchmarkDirect = false;
     bool m_CullingFrozen = false;
     bool m_FrozenCameraValid = false;
     UniformBufferObject m_FrozenCamera{};

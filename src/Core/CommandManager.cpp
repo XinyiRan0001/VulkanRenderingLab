@@ -33,7 +33,7 @@ CommandManager::CommandManager(
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
     const std::vector<MaterialData>& materials,
-    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug
+    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -51,6 +51,7 @@ CommandManager::CommandManager(
     m_Culling(culling),
     m_HiZ(hiZ),
     m_Debug(debug),
+    m_Inspector(inspector),
     m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
@@ -248,10 +249,11 @@ void CommandManager::RecordCommandBuffers()
             8
         );
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,6);
-        if (m_HiZ) m_HiZ->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
+        if (m_HiZ && m_RunHiZ) m_HiZ->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,7);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,4);
-        if (m_Culling) m_Culling->Record(m_CommandBuffers[i]);
+        if (m_Culling && m_RunCulling) m_Culling->Record(m_CommandBuffers[i]);
+        if (m_Inspector && m_InspectorEnabled && !m_BenchmarkMode) m_Inspector->RecordQuery(m_CommandBuffers[i]);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,5);
 
         // =====================================================
@@ -584,7 +586,7 @@ void CommandManager::RecordCommandBuffers()
                     );
             }
 
-            const bool gpuDriven = m_Culling && subMesh.firstInstance > 0;
+            const bool gpuDriven = m_Culling && m_RunCulling && subMesh.firstInstance > 0;
             materialPushConstants.flags.z = gpuDriven ? 1 : 0;
             vkCmdPushConstants(
                 m_CommandBuffers[i],
@@ -608,7 +610,8 @@ void CommandManager::RecordCommandBuffers()
             );
         }
 
-        if (m_Debug) m_Debug->Record(m_CommandBuffers[i]);
+        if (m_Debug && !m_BenchmarkMode) m_Debug->Record(m_CommandBuffers[i]);
+        if (m_Inspector && m_InspectorEnabled && !m_BenchmarkMode) m_Inspector->RecordPanel(m_CommandBuffers[i]);
         vkCmdEndRenderPass(
             m_CommandBuffers[i]
         );
@@ -749,4 +752,22 @@ void CommandManager::CaptureFrame(uint32_t imageIndex, const std::string& path) 
     vkFreeCommandBuffers(m_LogicalDevice.GetHandle(), m_CommandPool, 1, &cmd);
     if (!stbi_write_png(path.c_str(), extent.width, extent.height, 4, pixels.data(), extent.width*4)) throw std::runtime_error("Cannot write screenshot");
     std::cout << "[Capture] " << path << std::endl;
+}
+
+void CommandManager::SetBenchmarkMode(int mode) {
+    if (mode < 0 || mode > 2) throw std::runtime_error("Invalid culling benchmark mode");
+    if (vkDeviceWaitIdle(m_LogicalDevice.GetHandle()) != VK_SUCCESS)
+        throw std::runtime_error("Cannot wait before benchmark command recording");
+    if (m_Culling) m_Culling->SetHiZSampling(mode == 2);
+    m_BenchmarkMode = true;
+    m_RunCulling = mode != 0;
+    m_RunHiZ = mode == 2;
+    RecordCommandBuffers();
+}
+
+void CommandManager::SetInspectorEnabled(bool enabled) {
+    if(m_InspectorEnabled==enabled) return;
+    if(vkDeviceWaitIdle(m_LogicalDevice.GetHandle())!=VK_SUCCESS) throw std::runtime_error("Cannot wait for inspector toggle");
+    m_InspectorEnabled=enabled;
+    RecordCommandBuffers();
 }

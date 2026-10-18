@@ -19,6 +19,11 @@ int main()
         Check(projected.maximum.x - projected.minimum.x <= 1 &&
                   projected.maximum.y - projected.minimum.y <= 1,
               "footprint needs more than 2x2 texels");
+        Check(ProjectHiZSphere({0, 0, -.12f, .1f}, clip, 913, 517, 11).bypass ==
+                  HiZBypassReason::NearOrEyePlane,
+              "inspector must identify near-plane bypass");
+        Check(ProjectHiZSphere({100, 0, -5, .2f}, clip, 913, 517, 11).bypass == HiZBypassReason::Offscreen,
+              "inspector must identify offscreen bypass");
         Check(!ProjectHiZSphere({0, 0, -.12f, .1f}, clip, 913, 517, 11).valid,
               "near-plane crossing must bypass occlusion");
         Check(!ProjectHiZSphere({0, 0, 1, .2f}, clip, 913, 517, 11).valid,
@@ -30,8 +35,16 @@ int main()
             auto p = ProjectHiZSphere({float(i % 29) - 14, float(i % 13) - 6, -float(i % 40 + 2), .2f}, clip,
                                       913, 517, 11);
             if (p.valid)
+            {
+                const int span = 1 << p.mip;
+                Check(p.pixelMinimum.x >= 0 && p.pixelMinimum.y >= 0 && p.pixelMaximum.x < 913 &&
+                          p.pixelMaximum.y < 517,
+                      "pixel bounds must stay inside viewport");
+                Check(p.minimum == p.pixelMinimum / span && p.maximum == p.pixelMaximum / span,
+                      "displayed query cells must match expanded pixel bounds");
                 Check(p.maximum.x - p.minimum.x <= 1 && p.maximum.y - p.minimum.y <= 1,
                       "2x2 coverage guarantee failed");
+            }
         }
         HiZFootprint query;
         query.valid = true;
@@ -39,6 +52,8 @@ int main()
         query.maximum = {1, 1};
         query.nearest = .8f;
         std::vector<float> depths{.2f, .3f, .4f, .7f};
+        Check(QueryHiZFarthest(query, depths, 2) == .7f,
+              "diagnostic must expose maximum of all sampled cells");
         Check(QueryHiZOccluded(query, depths, 2), "fully covered farther bound should be occluded");
         depths[3] = 1;
         Check(!QueryHiZOccluded(query, depths, 2), "background hole must preserve visibility");

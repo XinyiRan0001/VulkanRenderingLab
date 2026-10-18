@@ -21,6 +21,7 @@
 #include "InstancedScene.h"
 #include "GpuCulling.h"
 #include "HiZ.h"
+#include "HiZInspector.h"
 #include "FrustumDebug.h"
 #include "TextureData.h"
 #include "TextureImage.h"
@@ -1179,6 +1180,7 @@ m_GraphicsPipeline =
     if (combinedMesh.instances.size() > 1)
         m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling,m_HiZ.get(),
             VkDescriptorImageInfo{m_BRDFLUT->GetSampler(),m_BRDFLUT->GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+    if (m_HiZ) m_HiZInspector=std::make_unique<HiZInspector>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_HiZ,*m_GpuCulling,combinedMesh);
     m_DescriptorManager =
     std::make_unique<DescriptorManager>(
         *m_LogicalDevice,
@@ -1232,7 +1234,7 @@ m_GraphicsPipeline =
             *m_DescriptorManager,
             combinedMesh.subMeshes,
             combinedMesh.materials,
-            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get()
+            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get()
         );
 
     std::cout
@@ -1393,6 +1395,19 @@ void VulkanContext::SetupCameraControls()
             }
 
             if (action == GLFW_PRESS) {
+                if (context->m_HiZInspector) {
+                    auto& inspector=*context->m_HiZInspector;
+                    if(key==GLFW_KEY_F10) {
+                        inspector.SetEnabled(!inspector.Enabled());
+                        context->m_CommandManager->SetInspectorEnabled(inspector.Enabled());
+                        std::cout << "[HiZ Inspector] " << (inspector.Enabled()?"ON: PgUp/PgDn mip, Tab / Shift+Tab instance":"OFF") << std::endl;
+                    }
+                    if(inspector.Enabled()) {
+                        if(key==GLFW_KEY_PAGE_DOWN) inspector.StepMip(1);
+                        if(key==GLFW_KEY_PAGE_UP) inspector.StepMip(-1);
+                        if(key==GLFW_KEY_TAB) inspector.StepSelection((mods&GLFW_MOD_SHIFT)?-1:1);
+                    }
+                }
                 if (key == GLFW_KEY_F9 && context->m_FrustumDebug) {
                     context->m_CullingFrozen = !context->m_CullingFrozen;
                     context->m_FrozenCameraValid = false;
@@ -1690,6 +1705,11 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         << m_GpuCulling->VisibleCount() << "/" << m_GpuCulling->TotalCount();
     if (m_FrustumDebug) title << " | Camera " << (m_CullingFrozen ? "FROZEN [F9]" : "LIVE [F9]");
     if (m_HiZ) title << " | HiZ " << (m_OcclusionEnabled ? "ON" : "OFF") << " hidden " << m_GpuCulling->OccludedCount();
+    if (m_HiZInspector && m_HiZInspector->Enabled()) {
+        title.str(""); title.clear();
+        title << "HiZ Inspector | " << m_HiZInspector->Status() << " | " << (m_CullingFrozen?"FROZEN":"LIVE");
+        std::cout << "[HiZ Inspector] " << m_HiZInspector->Status() << std::endl;
+    }
     glfwSetWindowTitle(
         m_Window.GetHandle(),
         title.str().c_str()
@@ -2961,6 +2981,7 @@ VulkanContext::~VulkanContext()
     m_EnvironmentCubemap.reset();
     m_HDRTextureImage.reset();
 
+    m_HiZInspector.reset();
     m_GpuCulling.reset();
     m_HiZ.reset();
     m_FrustumDebug.reset();
@@ -3605,7 +3626,9 @@ void VulkanContext::UpdateUniformBuffer()
     const auto& cullingCamera = m_CullingFrozen ? m_FrozenCamera : ubo;
     if (m_HiZ) m_HiZ->Update(cullingCamera);
     if (m_GpuCulling) m_GpuCulling->Update(cullingCamera,m_CullingEnabled,m_VerifyCulling,m_OcclusionEnabled);
-    if (m_FrustumDebug) m_FrustumDebug->Update(ubo,cullingCamera,m_CullingFrozen);
+    if (m_HiZInspector) m_HiZInspector->Update(cullingCamera,m_CullingEnabled,m_OcclusionEnabled,m_VerifyCulling);
+    if (m_FrustumDebug) m_FrustumDebug->Update(ubo,cullingCamera,m_CullingFrozen,
+        m_HiZInspector?m_HiZInspector->SelectedSphere():glm::vec4(0),m_HiZInspector && m_HiZInspector->Enabled());
     // Uniform updates and readback happen only after the preceding render fence.
     m_UniformBuffer->UploadData(
         &ubo,
@@ -3643,12 +3666,9 @@ void VulkanContext::ToggleSkybox()
 
 void VulkanContext::DrawFrame()
 {
-    std::cout << "[Context] Before DrawFrame" << std::endl;
-
     m_Renderer->DrawFrame();
-    if (m_GpuCulling) m_GpuCulling->MarkSubmitted();
-
-    std::cout << "[Context] After DrawFrame" << std::endl;
+    if (m_GpuCulling && !m_BenchmarkDirect) m_GpuCulling->MarkSubmitted();
+    if (m_HiZInspector) m_HiZInspector->MarkSubmitted();
 }
 void VulkanContext::SetInspection(int materialView, int lightingView, float environmentDegrees)
 {
@@ -3676,6 +3696,7 @@ void VulkanContext::FinishDiagnostics() {
         std::cout << "[GPU Culling] Visible: " << m_GpuCulling->VisibleCount() << " / " << m_GpuCulling->TotalCount()
             << " | frustum survivors: " << m_GpuCulling->FrustumCount() << " | Hi-Z occluded: " << m_GpuCulling->OccludedCount()
             << " | enabled: " << m_CullingEnabled << " | shadows: all instances" << std::endl;
+        if (m_HiZInspector) { m_HiZInspector->ReadCompleted(); if(m_HiZInspector->Enabled()) std::cout << "[HiZ Inspector] " << m_HiZInspector->Status() << std::endl; }
     }
 }
 
@@ -3694,4 +3715,14 @@ void VulkanContext::StartCullingObserver() {
     m_CameraPitch = glm::radians(30.0f);
     m_CameraDistance *= 2.2f;
     std::cout << "[Observer] Frozen culling camera; observer moved aside. F9: live/frozen, C: frustum, F8: Hi-Z." << std::endl;
+}
+
+void VulkanContext::ConfigureHiZInspector(bool enabled,int instance,int mip) {
+    if(!enabled) return;
+    if(!m_HiZInspector) throw std::runtime_error("Hi-Z inspector requires --occlusion-scene");
+    if(instance>=0) m_HiZInspector->Select(instance);
+    m_HiZInspector->SetMip(mip);
+    m_HiZInspector->SetEnabled(true);
+    m_CommandManager->SetInspectorEnabled(true);
+    std::cout << "[HiZ Inspector] ON: F10 toggle, PgUp/PgDn preview mip, Tab / Shift+Tab sphere" << std::endl;
 }

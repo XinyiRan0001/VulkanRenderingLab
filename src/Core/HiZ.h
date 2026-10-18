@@ -19,6 +19,9 @@ class HiZ
     {
         return {m_Sampler, m_Pyramid->GetView(), VK_IMAGE_LAYOUT_GENERAL};
     }
+    VkDescriptorImageInfo SampledDepth() const { return {m_Sampler,m_Depth->GetView(),VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL}; }
+    uint32_t Levels() const { return m_Levels; }
+    float FarthestCPU(const HiZFootprint& footprint) const { return QueryHiZFarthest(footprint,m_CPU.at(footprint.mip),std::max(1u,m_Padded.width >> footprint.mip)); }
     glm::uvec4 Settings(bool enabled) const
     {
         return {m_Extent.width, m_Extent.height, m_Levels, enabled ? 1u : 0u};

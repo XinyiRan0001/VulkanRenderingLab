@@ -9,7 +9,8 @@ class FrustumDebug
   public:
     FrustumDebug(const PhysicalDevice &, const LogicalDevice &, VkRenderPass, VkExtent2D);
     ~FrustumDebug();
-    void Update(const UniformBufferObject &observer, const UniformBufferObject &culling, bool enabled);
+    void Update(const UniformBufferObject &observer, const UniformBufferObject &culling, bool enabled,
+                glm::vec4 sphere = {}, bool inspect = false);
     void Record(VkCommandBuffer) const;
 
   private:
