@@ -96,7 +96,7 @@ void DescriptorManager::CreateDescriptorPool()
         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 
     // Diffuse, Shadow, HDR, Environment, Prefilter, BRDF LUT, Irradiance
-    poolSizes[1].descriptorCount = 11 * static_cast<uint32_t>(m_MaterialTextures.size() + 1);
+    poolSizes[1].descriptorCount = 12 * static_cast<uint32_t>(m_MaterialTextures.size() + 1);
 
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[2].descriptorCount = 2 * static_cast<uint32_t>(m_MaterialTextures.size() + 1);
@@ -263,7 +263,7 @@ void DescriptorManager::UpdateDescriptorSet()
     irradianceCubemapImageInfo.sampler =
         m_IrradianceCubemap.GetSampler();
     
-    std::array<VkWriteDescriptorSet, 14> descriptorWrites{};
+    std::array<VkWriteDescriptorSet, 15> descriptorWrites{};
 
     // binding 0: uniform buffer
     descriptorWrites[0].sType =
@@ -419,6 +419,10 @@ void DescriptorManager::UpdateDescriptorSet()
     descriptorWrites[13].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     descriptorWrites[13].descriptorCount=1;
     descriptorWrites[13].pBufferInfo=&visibleInfo;
+    VkDescriptorImageInfo disabledAo{m_TextureImage.GetSampler(),m_TextureImage.GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    descriptorWrites[14]={VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};descriptorWrites[14].dstBinding=14;
+    descriptorWrites[14].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;descriptorWrites[14].descriptorCount=1;
+    descriptorWrites[14].pImageInfo=&disabledAo;
     const VkDescriptorSet globalSet = m_DescriptorSet;
     for (size_t setIndex = 0; setIndex <= m_MaterialSets.size(); ++setIndex) {
         const bool isMaterial = setIndex < m_MaterialSets.size();
@@ -445,5 +449,14 @@ void DescriptorManager::UpdateDescriptorSet()
         0,
         nullptr
     );
+    }
+}
+void DescriptorManager::SetAoImage(VkImageView view,VkSampler sampler) {
+    VkDescriptorImageInfo image{view?sampler:m_TextureImage.GetSampler(),view?view:m_TextureImage.GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    std::vector<VkDescriptorSet> sets=m_MaterialSets;sets.push_back(m_DescriptorSet);
+    for(auto set:sets) {
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};write.dstSet=set;write.dstBinding=14;
+        write.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;write.descriptorCount=1;write.pImageInfo=&image;
+        vkUpdateDescriptorSets(m_LogicalDevice.GetHandle(),1,&write,0,nullptr);
     }
 }

@@ -37,8 +37,8 @@ The main vertex shader remaps compact slots through the visible-ID buffer. CPU
 camera-plane extraction is constant work; per-instance CPU tests occur only in
 explicit verification mode. Rendering does not wait for a CPU-visible count to
 choose its draw size. Character/floor/baked glTF draws retain the direct path;
-this implementation supports one shared-mesh instance group with multiple material
-ranges. Shadows deliberately draw every instance.
+each prototype has its own disjoint visible-ID partition and may have multiple
+material ranges. Shadows deliberately draw every instance.
 
 ```powershell
 .\build\Release\VulkanRenderingLab.exe --stress-count 10000 --camera-distance 8 --pitch 25 --paused
@@ -63,6 +63,64 @@ first-instance feature requirements. Explicit transfer/compute/vertex/indirect/h
 dependencies protect the outputs. Vulkan validation also prompted fixes to legacy
 IBL push-constant stages, render-pass depth/external dependencies and per-image
 present semaphores.
+
+## Multiple prototypes and material ranges
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --mixed-scene --hiz-inspector --paused
+```
+
+This optional scene alternates spheres with rotating, blue/orange two-material
+cubes. `--stress-count` is the **total** object count (default 1600, range 2..10000),
+partitioned between the two prototypes. The existing character, floor and static
+occluder wall remain. Add `--culling-observer` to inspect from the side.
+
+![Mixed prototype groups and inspector](docs/images/mixed-gpu-culling.png)
+
+**F11 / Shift+F11** select a group; **Tab / Shift+Tab** select an object within
+it. `--inspect-group 1` starts on cubes. The inspector displays the selected
+group's current GPU visible count and capacity; with the inspector off, the
+window title reports both groups. The console prints per-group frustum and
+occlusion counts. A fixed 1600-object view produced:
+
+| Group | Total | Frustum survivors | Hi-Z rejected | Visible objects | Material draws |
+|---|---:|---:|---:|---:|---:|
+| Spheres | 800 | 427 | 46 | 381 | 1 |
+| Cubes | 800 | 444 | 7 | 437 | 2 |
+
+Both cube material draws consume the same 437 IDs, so the unique visible object
+count is **818**, not the sum of all material command instance counts. Different
+prototype bounds intentionally produce different rejection rates.
+
+A 48-byte SSBO record per group defines its prototype sphere, source instance
+range, visible-output base, indirect-command range and statistics index. One
+64-thread compute kernel uses the dispatch Y dimension for groups and X for
+instances. Each group's atomic counter reserves slots only inside its fixed
+output partition. The vertex shader adds the group's visible base from material
+push constants before remapping instance IDs. Commands retain firstInstance=0;
+material descriptor binding and one indirect call per range remain explicit.
+This extends GPU instance counts, not GPU-generated draw counts or bindless materials.
+
+Layout construction rejects overlapping source ranges, inconsistent bounds and
+oversized command templates. Material ranges can be interleaved in scene order;
+an explicit draw-address table selects the correct command and visible base.
+CPU/GPU verification compares sorted IDs **within each output partition**, checks
+all material command counts and then verifies the aggregate. Shadows retain
+full source ranges. The ordinary single-prototype and baked glTF paths remain.
+
+Six CTest targets pass. Mixed-scene direct/frustum/Hi-Z captures are pixel-identical
+at three fixed views. Moving/frozen camera checks, 10000 instances, unequal groups,
+one empty group and both groups empty passed exact-ID and Vulkan synchronization
+validation checks. These establish correctness; they are not a performance claim.
+
+```powershell
+.\tools\benchmark-culling.ps1 -MixedScene
+```
+
+The runner keeps mixed results separate as `mixed-<count>.csv`. Raw and summary
+CSVs include a `geometry` field; a new `.batches.csv` records per-group counts,
+capacities and draw ranges for each measured frame. The previously published
+RTX 4050 sample is sphere-only and must not be treated as a mixed-scene result.
 
 ## Current-frame Hi-Z occlusion culling
 
@@ -118,7 +176,8 @@ this frame's draw count. Hi-Z resources are only allocated in the optional scene
 
 **F10** toggles the inspector. **Page Up / Page Down** cycle raw wall depth and
 pyramid mips 0..11 at the default resolution. **Tab / Shift+Tab** select the
-next/previous sphere. `--inspect-instance 820` selects a zero-based sphere offset;
+next/previous object. **F11 / Shift+F11** switch prototype groups.
+`--inspect-instance 820` selects an offset within the selected group;
 `--hiz-mip -1` previews raw depth, and `--hiz-mip 7` previews pyramid level 7.
 Add `--culling-observer` to inspect the selected bound from an independent view.
 Existing **C**, **F8**, **F9** controls remain available.
@@ -173,7 +232,7 @@ side views often became slower with Hi-Z. These are local GPU execution timings,
 not end-to-end FPS or a universal speedup claim.
 
 See [measurement conditions, all views and summary CSV](docs/benchmarks/README.md)
-for the results and reproduction commands. Five tests pass; separate validation
+for the results and reproduction commands. Six tests pass; separate validation
 runs produced pixel-identical direct/frustum/Hi-Z captures at 1600 instances for all three views.
 
 ## Character and Material Lab
@@ -1001,6 +1060,8 @@ A recommended order for demonstrating the renderer:
 | Shadows | `2` | PCF |
 | Shadows | `3` | PCSS |
 | Shadows | `4` | Shadow Map Debug |
+| SSAO | `F3` | Toggle indirect-diffuse AO composition / off |
+| SSAO | `F4` | Cycle normal, depth, raw AO, blurred AO and composite views |
 | HDR | `H` | Toggle Skybox |
 | HDR | `F5` | Exposure - |
 | HDR | `F6` | Exposure + |
@@ -1035,3 +1096,170 @@ Observer validation: a 12-frame yaw sweep retained exactly the same 762 visible
 IDs while the observer moved; CPU/GPU verification passed every frame. Vulkan
 validation and synchronization validation reported no errors in this run.
 With both rejection switches disabled the same frozen camera retains all 1600.
+
+
+### Full-scene normal/depth prepass (SSAO foundation)
+
+The SSAO path now includes sampled scene geometry buffers, raw AO, bilateral
+filtering and optional indirect-diffuse composition. It is separate from the wall-only Hi-Z
+occluder pass. The character, floor, material balls and instanced/glTF geometry
+use the same camera, object transforms and position operation order as forward
+rendering. Sky/background pixels are explicitly marked invalid.
+
+```powershell
+cmake --build build --config Release
+.\build\Release\VulkanRenderingLab.exe --prepass-view normal
+.\build\Release\VulkanRenderingLab.exe --prepass-view depth --depth-range 10
+# Diagnostic readback; adds GPU/CPU work, unsuitable for performance comparison:
+.\build\Release\VulkanRenderingLab.exe --prepass-view normal --verify-prepass --paused --frames 3
+```
+
+**F4** cycles Off → View Normal → Linear Depth → World Normal → Raw SSAO →
+Blurred SSAO → SSAO Composite → Off. **F3** toggles Composite / Off.
+`--prepass` keeps shaded rendering while executing the prepass. Geometric
+normals are stored in view space (normal maps are not applied), using the inverse
+transpose for object transforms. RGBA16F stores unit normal XYZ and positive
+view distance `-viewPosition.z` in alpha, with RGBA32F as a checked fallback.
+A sampled D32 image stores Vulkan device depth in [0,1]. The depth preview
+reconstructs view position through the actual inverse projection and maps
+positive distance / `--depth-range` to grayscale; purple identifies background.
+
+![View-space geometric normals](docs/images/prepass-normal.png)
+![Reconstructed linear depth](docs/images/prepass-linear-depth.png)
+
+Attachment-write → fragment-read and next-use read → attachment-write
+dependencies are explicit. Current rendering has one frame in flight: the frame
+fence protects shared images, uniform updates and diagnostic readback. Multiple
+frames in flight would require independent resources or equivalent synchronization.
+Window resize preserves CPU camera/debug/light state and recreates resources
+and descriptors after GPU completion. This first implementation rebuilds the
+whole renderer, including IBL, and therefore briefly pauses during resize.
+
+`--verify-prepass` checks unit normals, background coverage, reconstructed linear
+distance against interpolated view distance, and prepass depth against main-pass
+depth. Main depth is retained for this diagnostic only. Frozen-culling observer
+mode deliberately skips the main-depth comparison because its visible draw list
+belongs to another camera. Verification reads the actual GPU attachments.
+Regular GPU timing reports Prepass separately and measures Total with its own
+start/end timestamps; readback/debug rendering adds overhead.
+
+Validation on 2026-10-19: default scene, a 12-frame mixed-scene camera sweep,
+glTF validation scene at 961×541, and resize 1280×720 → 1024×768 passed attachment
+readback checks with zero observed main-depth difference. Vulkan validation and
+synchronization validation reported no errors in those runs. Six CTest tests
+passed. Prepass-only shaded output matched the baseline pixel-for-pixel; the
+resized normal view matched a fresh run at the same dimensions. RenderDoc captured the normal view; its structured capture confirms
+RGBA16F/D32 attachments, five prepass indexed draws, sampling layouts and the
+prepass → shadow → main ordering. This does not validate future AO quality.
+
+An optional `--renderdoc-capture` flag triggers one capture when launched through
+RenderDoc; Windows uses the bundled MIT-licensed RenderDoc application API header
+in `third_party/renderdoc/renderdoc_app.h`. RenderDoc is not required for normal
+execution. Captures and logs remain in the ignored build directory.
+
+
+### Raw SSAO
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ssao-view
+.\build\Release\VulkanRenderingLab.exe --ssao-view --ao-radius 0.5 --ao-bias 0.025 --ao-samples 64
+.\tools\verify-ssao.ps1
+```
+
+An 8×8 compute dispatch reads prepass geometric normals and device depth,
+reconstructs view-space positions, and rotates a fixed hemisphere kernel with a
+stable 4×4 rotation tile. A floating-point R32F image stores raw visibility:
+**1 = unoccluded, 0 = fully occluded**. The separate fullscreen preview samples
+that image. This view intentionally displays the unfiltered result, without contrast boost
+or lighting composition. `--ssao` selects the separate final composition mode.
+
+`--ao-radius` is in scene/view units (default 0.5, positive and at most 10),
+`--ao-bias` avoids self-occlusion (default 0.025, nonnegative and below radius),
+and `--ao-samples` selects 1–64 kernel entries (default 32). Radius is applied
+before projection, so it is independent of camera distance. A receiver tangent-plane test rejects coplanar self-occlusion from
+pixel-center snapping; a smooth distance weight rejects distant depth layers. Background, out-of-bounds and clipped
+samples contribute no occlusion; the denominator remains the configured sample
+count to avoid artificially dark screen edges. Missing offscreen/hidden geometry
+can therefore cause under-occlusion, a screen-space limitation.
+
+Attachment writes explicitly become visible to compute sampling. AO storage
+writes transition to fragment sampling/optional diagnostic transfer reads before
+use. Existing single-frame fence and resize lifecycle also protect the AO image,
+its descriptors and parameters. Raw AO and blur compute run in all three AO modes (raw, blurred, composite).
+GPU timing reports SSAO and Blur independently of Prepass and the complete frame
+interval; raw-view timing therefore also includes the blur stage.
+
+`--verify-prepass` in Raw SSAO mode also reads the actual R32F output and checks
+finite [0,1] values and exactly white background. Original embedded glTF fixtures
+in `assets/models/ssao-validation` isolate a plane and a perpendicular wall/plane
+join. A repeatable GPU acceptance script checks them from two camera distances;
+ordinary CTest remains independent of GPU/window availability. Default-scene
+orbit, 16/64-sample settings and resize were also checked under Vulkan and
+synchronization validation. No error was observed in those runs. These checks do
+not guarantee artifact-free AO for all scenes.
+
+The raw AO and corner screenshots below use the default 32 samples.
+
+![Unfiltered SSAO visibility](docs/images/ssao-raw.png)
+![Wall/plane contact occlusion](docs/images/ssao-corner.png)
+
+
+### Bilateral AO filtering and indirect-diffuse composition
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ssao
+.\build\Release\VulkanRenderingLab.exe --ssao-blurred
+# Isolate indirect diffuse to inspect the AO contribution:
+.\build\Release\VulkanRenderingLab.exe --ssao --lighting-view 2
+```
+
+The full-resolution 5×5 compute filter combines spatial Gaussian weights,
+linear view-depth differences and normal similarity. It rejects background and
+out-of-bounds pixels and normalizes accepted weights. The center always has
+unit weight, so constants remain constant and there is no zero denominator.
+Depth sigma is `max(0.002, aoRadius * 0.1)` in scene/view units, spatial sigma is
+1.5 pixels, and the normal weight is `max(dot(N0,N1),0)^32`. These fixed defaults
+are a first quality baseline rather than a temporal denoiser.
+
+Raw and blurred AO use separate R32F images. The raw storage-write → blur
+compute-read and blurred storage-write → forward/preview fragment-read
+transitions are explicit. The forward material descriptor sets bind blurred AO
+only for composition; disabled modes bind an existing valid sampled texture and
+do not sample it. Mode changes wait for GPU completion, update descriptors and
+re-record affected command buffers. Resizing recreates both AO images and their
+descriptors, preserving the selected mode and sampling parameters.
+
+In composite mode, filtered SSAO multiplies **indirect diffuse IBL** and the
+fallback diffuse ambient before tone mapping. Direct lighting, Hard/PCF/PCSS
+shadow calculations, specular IBL and emissive are unchanged. Existing material
+AO behavior remains intact. Metallic surfaces can consequently show very little
+change because their diffuse contribution is small or zero.
+
+![AO disabled](docs/images/ssao-off.png)
+![Filtered AO applied to indirect diffuse](docs/images/ssao-on.png)
+![Bilateral-filtered AO visibility](docs/images/ssao-blurred.png)
+
+Validation on 2026-10-19: GPU raw/blurred values are finite in [0,1] with white
+background. GPU bilateral results at 560 covered grid samples agreed with a CPU
+reference over the actual readback inputs (observed maximum error about 2.4e-7
+in the default 1280×720 scene). Smooth-surface horizontal neighbor differences
+averaged 0.00234 raw versus 0.000317 filtered; this is a diagnostic smoothness
+metric, not a complete perceptual-quality measurement. Plane/corner fixtures at
+two distances still pass. Direct-only and specular-IBL-only captures are
+pixel-identical with AO on/off, and repeated composition/off transitions restore
+identical captures in each state. Final composition, raw and filtered views are
+also checked during mode cycling. Validation/readback overhead is excluded from
+any performance claim; no new benchmark result is published here.
+
+For a bounded mode/descriptor regression run:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ao-cycle-test --verify-prepass --paused --frames 8
+```
+
+This debug option cycles Off → Composite → Off → Raw → Blurred → Composite →
+Off → Composite. With `--capture build/ao-cycle`, it saves one numbered image per
+frame. `--verify-prepass` additionally compares sampled GPU blur values against
+the CPU reference. Current limitations include fixed 5×5 support, no temporal
+accumulation, missing offscreen/hidden geometry and a full renderer rebuild on
+resize. Inspect silhouette and thin geometry artifacts per scene.

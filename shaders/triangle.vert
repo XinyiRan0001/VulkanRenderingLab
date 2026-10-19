@@ -51,7 +51,7 @@ layout(location = 7) flat out vec4 fragInstanceProperties;
 void main()
 {
     // gl_InstanceIndex already includes firstInstance from vkCmdDrawIndexed.
-    uint instanceId = material.flags.z != 0 ? visibleIds[gl_InstanceIndex] : uint(gl_InstanceIndex);
+    uint instanceId = material.flags.z != 0 ? visibleIds[uint(material.flags.w)+gl_InstanceIndex] : uint(gl_InstanceIndex);
     InstanceData instance = instances[instanceId];
     mat4 objectToWorld = ubo.model * instance.model;
     fragInstanceProperties = instance.materialProperties;

@@ -104,3 +104,12 @@ The frozen-camera observer regression still matched CPU/GPU visible IDs at
 visibility counter identities and summary agreement with raw mean/median.
 
 Reference: [Vulkan query specification](https://docs.vulkan.org/spec/latest/chapters/queries.html).
+
+## Mixed-prototype runner
+
+`tools/benchmark-culling.ps1 -MixedScene` tests the sphere/cube scene and names
+outputs `mixed-<count>.csv`, leaving the sphere-only sample files separate. The
+current exporter adds `geometry` to raw/summary rows and a `.batches.csv` file for
+per-group counts and address ranges. Counts describe unique objects per group,
+not the sum of instance counts across material draws. The sample table above
+remains the historical sphere-only run; no mixed-scene speedup is implied.

@@ -10,7 +10,7 @@ class RenderPass
 {
 public:
     RenderPass(const LogicalDevice& logicalDevice,
-        const Swapchain& swapchain);
+        const Swapchain& swapchain, bool preserveDepth = false);
 
     ~RenderPass();
 
@@ -22,6 +22,7 @@ public:
 private:
     const LogicalDevice& m_LogicalDevice;
     const Swapchain& m_Swapchain;
+    bool m_PreserveDepth = false;
 
     VkRenderPass m_RenderPass = VK_NULL_HANDLE;
 

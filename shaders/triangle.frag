@@ -57,6 +57,7 @@ layout(binding = 8) uniform sampler2D normalMap;
 layout(binding = 9) uniform sampler2D metallicRoughnessMap;
 layout(binding = 10) uniform sampler2D occlusionMap;
 layout(binding = 11) uniform sampler2D emissiveMap;
+layout(binding = 14) uniform sampler2D screenAo;
 layout(location = 0) out vec4 outColor;
 
 
@@ -961,6 +962,8 @@ void main()
                 environmentBRDF.y
             );
 
+        // Screen-space AO affects indirect diffuse only. Existing material AO is unchanged.
+        if(ubo.lightingSettings.z>.5) diffuseEnvironmentLighting*=texelFetch(screenAo,ivec2(gl_FragCoord.xy),0).r;
         int component = int(ubo.lightingSettings.y);
         environmentLighting = (component == 2 ? diffuseEnvironmentLighting :
             component == 3 ? specularEnvironmentLighting :
@@ -979,6 +982,8 @@ void main()
             1.0 -
             metallic
         );
+
+    if(ubo.lightingSettings.z>.5) fallbackAmbient*=texelFetch(screenAo,ivec2(gl_FragCoord.xy),0).r;
 
     // =========================================================
     // Final lighting composition

@@ -5,12 +5,12 @@
 #include "VulkanContext.h"
 #include "Window.h"
 #include <array>
-#include <vector>
 #include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 void VulkanContext::RunCullingBenchmark(const std::string &path, int warmup, int samples, int repeats,
                                         bool captures)
@@ -20,22 +20,28 @@ void VulkanContext::RunCullingBenchmark(const std::string &path, int warmup, int
             "Benchmark requires the static wall stress scene, no verification or observer");
     std::ofstream raw(path);
     std::ofstream summary(path + ".summary.csv");
-    if (!raw || !summary)
+    std::ofstream batches(path + ".batches.csv");
+    if (!raw || !summary || !batches)
         throw std::runtime_error("Cannot open benchmark CSV output");
     const auto extent = m_Swapchain->GetExtent();
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(m_PhysicalDevice->GetHandle(), &properties);
+    const char *geometry = m_MixedScene ? "mixed" : "spheres";
     const char *modes[] = {"direct", "frustum", "frustum_hiz"};
     const char *scenes[] = {"wall_front", "wall_edge", "side_view"};
     const float yaws[] = {0.f, 35.f, 90.f};
     const std::string header =
-        "gpu,driver_version,width,height,instances,scene,yaw_deg,pitch_deg,distance,shadow_mode,mode,repeat,"
+        "gpu,driver_version,width,height,instances,geometry,scene,yaw_deg,pitch_deg,distance,shadow_mode,"
+        "mode,repeat,"
         "warmup_frames,sample,visible,frustum_survivors,occluded,hiz_ms,cull_ms,shadow_ms,main_ms,total_ms";
     raw << header << "\n" << std::fixed << std::setprecision(6);
-    summary << "gpu,driver_version,width,height,instances,scene,yaw_deg,pitch_deg,distance,shadow_mode,mode,"
+    summary << "gpu,driver_version,width,height,instances,geometry,scene,yaw_deg,pitch_deg,distance,shadow_"
+               "mode,mode,"
                "samples,total_mean_ms,total_median_ms,total_p95_ms,hiz_mean_ms,cull_mean_ms,shadow_mean_ms,"
                "main_mean_ms,visible\n"
             << std::fixed << std::setprecision(6);
+    batches << "geometry,scene,mode,repeat,sample,group,name,total,visible,frustum,occluded,visible_base,"
+               "first_command,material_draws\n";
     m_Renderer->SetQuiet(true);
     m_PointLightAnimationEnabled = false;
     // Lock interactive settings for reproducible static-camera samples.
@@ -73,6 +79,7 @@ void VulkanContext::RunCullingBenchmark(const std::string &path, int warmup, int
                     if (captures && repeat == 0 && frame == 0)
                         CaptureNextFrame(path + "." + scenes[scene] + "." + modes[mode] + ".png");
                     DrawFrame();
+                    if(m_Renderer->NeedsRebuild()) throw std::runtime_error("Window changed during benchmark; rerun with a fixed size");
                     // Queries and telemetry now belong to THIS submitted frame, not the prior mode.
                     m_Renderer->WaitForFrame();
                     if (mode != 0)
@@ -89,9 +96,22 @@ void VulkanContext::RunCullingBenchmark(const std::string &path, int warmup, int
                     timings[mode].push_back(timing);
                     const auto count = mode == 0 ? m_GpuCulling->TotalCount() : m_GpuCulling->VisibleCount();
                     visible[mode] = count;
+                    const auto &layout = m_GpuCulling->Layout();
+                    const auto &groupStats = m_GpuCulling->BatchStatistics();
+                    for (size_t group = 0; group < layout.batches.size(); ++group)
+                    {
+                        const auto &batch = layout.batches[group];
+                        batches << geometry << ',' << scenes[scene] << ',' << modes[mode] << ',' << repeat + 1
+                                << ',' << frame - warmup << ',' << group << ','
+                                << std::quoted(layout.names[group]) << ',' << batch.instances.y << ','
+                                << (mode == 0 ? batch.instances.y : groupStats[group].visible) << ','
+                                << (mode == 0 ? batch.instances.y : groupStats[group].frustum) << ','
+                                << (mode == 0 ? 0 : groupStats[group].occluded) << ',' << batch.instances.z
+                                << ',' << batch.commands.x << ',' << batch.commands.y << "\n";
+                    }
                     raw << std::quoted(properties.deviceName) << ',' << properties.driverVersion << ','
-                        << extent.width << ',' << extent.height << ',' << m_StressCount << ','
-                        << scenes[scene] << ',' << yaws[scene] << ',' << glm::degrees(pitch) << ','
+                        << extent.width << ',' << extent.height << ',' << m_StressCount << ',' << geometry
+                        << ',' << scenes[scene] << ',' << yaws[scene] << ',' << glm::degrees(pitch) << ','
                         << distance << ',' << m_ShadowMode << ',' << modes[mode] << ',' << repeat + 1 << ','
                         << warmup << ',' << frame - warmup << ',' << count << ','
                         << (mode == 0 ? count : m_GpuCulling->FrustumCount()) << ','
@@ -113,10 +133,10 @@ void VulkanContext::RunCullingBenchmark(const std::string &path, int warmup, int
             }
             const auto stats = SummarizeTimings(totals);
             summary << std::quoted(properties.deviceName) << ',' << properties.driverVersion << ','
-                    << extent.width << ',' << extent.height << ',' << m_StressCount << ',' << scenes[scene]
-                    << ',' << yaws[scene] << ',' << glm::degrees(pitch) << ',' << distance << ','
-                    << m_ShadowMode << ',' << modes[mode] << ',' << totals.size() << ',' << stats.mean << ','
-                    << stats.median << ',' << stats.p95 << ',' << SummarizeTimings(hiz).mean << ','
+                    << extent.width << ',' << extent.height << ',' << m_StressCount << ',' << geometry << ','
+                    << scenes[scene] << ',' << yaws[scene] << ',' << glm::degrees(pitch) << ',' << distance
+                    << ',' << m_ShadowMode << ',' << modes[mode] << ',' << totals.size() << ',' << stats.mean
+                    << ',' << stats.median << ',' << stats.p95 << ',' << SummarizeTimings(hiz).mean << ','
                     << SummarizeTimings(cull).mean << ',' << SummarizeTimings(shadow).mean << ','
                     << SummarizeTimings(main).mean << ',' << visible[mode] << "\n";
             std::cout << "[Culling Benchmark Result] " << scenes[scene] << " / " << modes[mode] << " mean "
@@ -124,8 +144,10 @@ void VulkanContext::RunCullingBenchmark(const std::string &path, int warmup, int
         }
         raw.flush();
         summary.flush();
-        if (!raw || !summary)
+        batches.flush();
+        if (!raw || !summary || !batches)
             throw std::runtime_error("Cannot write benchmark CSV");
     }
-    std::cout << "[Culling Benchmark] Saved " << path << " and " << path << ".summary.csv" << std::endl;
+    std::cout << "[Culling Benchmark] Saved " << path << " and " << path << ".summary.csv and " << path
+              << ".batches.csv" << std::endl;
 }

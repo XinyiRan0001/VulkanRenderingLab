@@ -21,6 +21,8 @@
 #include "InstancedScene.h"
 #include "GpuCulling.h"
 #include "HiZ.h"
+#include "ScenePrepass.h"
+#include <tuple>
 #include "HiZInspector.h"
 #include "FrustumDebug.h"
 #include "TextureData.h"
@@ -55,7 +57,7 @@ const char* LightingViewName(int mode) {
 }
 }
 
-VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene)
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass)
     : m_Window(window)
 {
     // =========================================================
@@ -65,6 +67,8 @@ VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint3
     if (stressCount > 10000 || (stressCount && !scenePath.empty()))
         throw std::runtime_error("--stress-count accepts 1..10000 and cannot be combined with --scene");
     if (occlusionScene && (!stressCount || !scenePath.empty())) throw std::runtime_error("Occlusion scene requires a stress grid");
+    if(mixedScene && (!occlusionScene || stressCount<2)) throw std::runtime_error("Mixed scene requires a wall and at least two instances");
+    m_MixedScene=mixedScene;
     m_StressCount = stressCount;
     m_VerifyCulling = verifyCulling;
     CreateInstance();
@@ -88,7 +92,7 @@ VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint3
 
     m_RenderPass = std::make_unique<RenderPass>(
         *m_LogicalDevice,
-        *m_Swapchain
+        *m_Swapchain,verifyPrepass
     );
 
     // =========================================================
@@ -102,7 +106,7 @@ VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint3
         m_Swapchain->GetExtent().height,
         VK_FORMAT_D32_SFLOAT,
         VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         VK_IMAGE_ASPECT_DEPTH_BIT
     );
@@ -505,16 +509,21 @@ m_GraphicsPipeline =
     // Geometry is appended once. All placements and varying PBR parameters
     // live in the instance array, not in copied/modified vertices.
     for (auto& material : materialBallMesh.materials) material.hasDiffuseTexture = false;
-    const auto instances = CreateMaterialInstances(stressCount);
-    AppendInstancedMesh(combinedMesh, materialBallMesh, instances);
+    if(mixedScene) {
+        AppendMixedInstances(combinedMesh,stressCount);
+        std::cout << "[Instancing] Mixed objects: " << stressCount << " | prototypes: 2 | material draws per pass: 3" << std::endl;
+    } else {
+        const auto instances = CreateMaterialInstances(stressCount);
+        AppendInstancedMesh(combinedMesh, materialBallMesh, instances);
+        const uint64_t geometryBytes = materialBallMesh.vertices.size() * sizeof(Vertex) +
+            materialBallMesh.indices.size() * sizeof(uint32_t);
+        std::cout << "[Instancing] Objects: " << instances.size()
+            << " | mesh copies: 1 | material-batch draws per pass: " << materialBallMesh.subMeshes.size()
+            << " | shared mesh bytes: " << geometryBytes
+            << " | instance bytes: " << instances.size() * sizeof(InstanceData)
+            << " | duplicated-geometry baseline bytes: " << geometryBytes * instances.size() << std::endl;
+    }
     if (occlusionScene) AppendOcclusionWall(combinedMesh);
-    const uint64_t geometryBytes = materialBallMesh.vertices.size() * sizeof(Vertex) +
-        materialBallMesh.indices.size() * sizeof(uint32_t);
-    std::cout << "[Instancing] Objects: " << instances.size()
-        << " | mesh copies: 1 | material-batch draws per pass: " << materialBallMesh.subMeshes.size()
-        << " | shared mesh bytes: " << geometryBytes
-        << " | instance bytes: " << instances.size() * sizeof(InstanceData)
-        << " | duplicated-geometry baseline bytes: " << geometryBytes * instances.size() << std::endl;
 
     } // legacy OBJ demonstration
     if (!m_IsGltfScene) {
@@ -1180,7 +1189,16 @@ m_GraphicsPipeline =
     if (combinedMesh.instances.size() > 1)
         m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling,m_HiZ.get(),
             VkDescriptorImageInfo{m_BRDFLUT->GetSampler(),m_BRDFLUT->GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+    m_ScenePrepass=std::make_unique<ScenePrepass>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_UniformBuffer,*m_InstanceBuffer,combinedMesh.subMeshes,verifyPrepass);
     if (m_HiZ) m_HiZInspector=std::make_unique<HiZInspector>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_HiZ,*m_GpuCulling,combinedMesh);
+    if(m_GpuCulling) {
+        const auto& layout=m_GpuCulling->Layout();
+        for(size_t g=0;g<layout.batches.size();++g) {
+            const auto& batch=layout.batches[g];
+            std::cout << "[Culling Group] " << g << " " << layout.names[g] << " instances " << batch.instances.x << "+" << batch.instances.y
+                << " visible base " << batch.instances.z << " commands " << batch.commands.x << "+" << batch.commands.y << std::endl;
+        }
+    }
     m_DescriptorManager =
     std::make_unique<DescriptorManager>(
         *m_LogicalDevice,
@@ -1234,7 +1252,7 @@ m_GraphicsPipeline =
             *m_DescriptorManager,
             combinedMesh.subMeshes,
             combinedMesh.materials,
-            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get()
+            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle()
         );
 
     std::cout
@@ -1395,17 +1413,20 @@ void VulkanContext::SetupCameraControls()
             }
 
             if (action == GLFW_PRESS) {
+                if(key==GLFW_KEY_F3 && context->m_ScenePrepass) context->ConfigurePrepass(context->m_ScenePrepass->Mode()==7?0:7,context->m_ScenePrepass->DepthRange());
+                if(key==GLFW_KEY_F4 && context->m_ScenePrepass) context->ConfigurePrepass(context->m_ScenePrepass->Mode()==3?5:context->m_ScenePrepass->Mode()==7?0:context->m_ScenePrepass->Mode()+1,context->m_ScenePrepass->DepthRange());
                 if (context->m_HiZInspector) {
                     auto& inspector=*context->m_HiZInspector;
                     if(key==GLFW_KEY_F10) {
                         inspector.SetEnabled(!inspector.Enabled());
                         context->m_CommandManager->SetInspectorEnabled(inspector.Enabled());
-                        std::cout << "[HiZ Inspector] " << (inspector.Enabled()?"ON: PgUp/PgDn mip, Tab / Shift+Tab instance":"OFF") << std::endl;
+                        std::cout << "[HiZ Inspector] " << (inspector.Enabled()?"ON: PgUp/PgDn mip, Tab instance, F11 group":"OFF") << std::endl;
                     }
                     if(inspector.Enabled()) {
                         if(key==GLFW_KEY_PAGE_DOWN) inspector.StepMip(1);
                         if(key==GLFW_KEY_PAGE_UP) inspector.StepMip(-1);
                         if(key==GLFW_KEY_TAB) inspector.StepSelection((mods&GLFW_MOD_SHIFT)?-1:1);
+                        if(key==GLFW_KEY_F11) inspector.StepGroup((mods&GLFW_MOD_SHIFT)?-1:1);
                     }
                 }
                 if (key == GLFW_KEY_F9 && context->m_FrustumDebug) {
@@ -1703,6 +1724,11 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
 
     if (m_GpuCulling) title << " | Cull " << (m_CullingEnabled ? "ON " : "OFF ")
         << m_GpuCulling->VisibleCount() << "/" << m_GpuCulling->TotalCount();
+    if(m_ScenePrepass && m_ScenePrepass->Enabled()) title << " | Prepass " << m_ScenePrepass->Mode() << " [F4]";
+    if(m_GpuCulling && m_GpuCulling->Layout().batches.size()>1) {
+        const auto& layout=m_GpuCulling->Layout();const auto& counts=m_GpuCulling->BatchStatistics();
+        for(size_t g=0;g<counts.size();++g) title << " | " << layout.names[g] << ' ' << counts[g].visible << '/' << layout.batches[g].instances.y;
+    }
     if (m_FrustumDebug) title << " | Camera " << (m_CullingFrozen ? "FROZEN [F9]" : "LIVE [F9]");
     if (m_HiZ) title << " | HiZ " << (m_OcclusionEnabled ? "ON" : "OFF") << " hidden " << m_GpuCulling->OccludedCount();
     if (m_HiZInspector && m_HiZInspector->Enabled()) {
@@ -2981,6 +3007,7 @@ VulkanContext::~VulkanContext()
     m_EnvironmentCubemap.reset();
     m_HDRTextureImage.reset();
 
+    m_ScenePrepass.reset();
     m_HiZInspector.reset();
     m_GpuCulling.reset();
     m_HiZ.reset();
@@ -3501,7 +3528,7 @@ void VulkanContext::UpdateUniformBuffer()
 
         m_MaterialView
     );
-    ubo.lightingSettings = glm::vec4(m_EnvironmentRotation, float(m_LightingView), 0.0f, 0.0f);
+    ubo.lightingSettings = glm::vec4(m_EnvironmentRotation, float(m_LightingView), m_ScenePrepass && m_ScenePrepass->Mode()==7 ? 1.f:0.f, 0.0f);
 
     // =========================================================
     // Orbiting / manually controlled light
@@ -3624,6 +3651,7 @@ void VulkanContext::UpdateUniformBuffer()
         m_FrozenCameraValid = true;
     }
     const auto& cullingCamera = m_CullingFrozen ? m_FrozenCamera : ubo;
+    if(m_ScenePrepass) m_ScenePrepass->Update(ubo,!m_CullingFrozen);
     if (m_HiZ) m_HiZ->Update(cullingCamera);
     if (m_GpuCulling) m_GpuCulling->Update(cullingCamera,m_CullingEnabled,m_VerifyCulling,m_OcclusionEnabled);
     if (m_HiZInspector) m_HiZInspector->Update(cullingCamera,m_CullingEnabled,m_OcclusionEnabled,m_VerifyCulling);
@@ -3666,7 +3694,8 @@ void VulkanContext::ToggleSkybox()
 
 void VulkanContext::DrawFrame()
 {
-    m_Renderer->DrawFrame();
+    if(!m_Renderer->DrawFrame()) return;
+    if(m_ScenePrepass) m_ScenePrepass->MarkSubmitted();
     if (m_GpuCulling && !m_BenchmarkDirect) m_GpuCulling->MarkSubmitted();
     if (m_HiZInspector) m_HiZInspector->MarkSubmitted();
 }
@@ -3691,11 +3720,17 @@ void VulkanContext::ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, 
 void VulkanContext::SetCulling(bool enabled, bool verify) { m_CullingEnabled=enabled; m_VerifyCulling=verify; }
 void VulkanContext::FinishDiagnostics() {
     m_Renderer->WaitForFrame();
+    if(m_ScenePrepass) m_ScenePrepass->ReadCompleted();
     if (m_GpuCulling) {
         m_GpuCulling->ReadCompleted();
         std::cout << "[GPU Culling] Visible: " << m_GpuCulling->VisibleCount() << " / " << m_GpuCulling->TotalCount()
             << " | frustum survivors: " << m_GpuCulling->FrustumCount() << " | Hi-Z occluded: " << m_GpuCulling->OccludedCount()
             << " | enabled: " << m_CullingEnabled << " | shadows: all instances" << std::endl;
+        for(size_t g=0;g<m_GpuCulling->Layout().batches.size();++g) {
+            const auto& counts=m_GpuCulling->BatchStatistics()[g];
+            std::cout << "[Group Stats] " << g << ' ' << m_GpuCulling->Layout().names[g] << " visible " << counts.visible
+                << '/' << m_GpuCulling->Layout().batches[g].instances.y << " frustum " << counts.frustum << " occluded " << counts.occluded << std::endl;
+        }
         if (m_HiZInspector) { m_HiZInspector->ReadCompleted(); if(m_HiZInspector->Enabled()) std::cout << "[HiZ Inspector] " << m_HiZInspector->Status() << std::endl; }
     }
 }
@@ -3717,12 +3752,69 @@ void VulkanContext::StartCullingObserver() {
     std::cout << "[Observer] Frozen culling camera; observer moved aside. F9: live/frozen, C: frustum, F8: Hi-Z." << std::endl;
 }
 
-void VulkanContext::ConfigureHiZInspector(bool enabled,int instance,int mip) {
+void VulkanContext::ConfigureHiZInspector(bool enabled,int instance,int mip,int group) {
     if(!enabled) return;
     if(!m_HiZInspector) throw std::runtime_error("Hi-Z inspector requires --occlusion-scene");
+    m_HiZInspector->SelectGroup(group);
     if(instance>=0) m_HiZInspector->Select(instance);
     m_HiZInspector->SetMip(mip);
     m_HiZInspector->SetEnabled(true);
     m_CommandManager->SetInspectorEnabled(true);
-    std::cout << "[HiZ Inspector] ON: F10 toggle, PgUp/PgDn preview mip, Tab / Shift+Tab sphere" << std::endl;
+    std::cout << "[HiZ Inspector] ON: F10 toggle, PgUp/PgDn preview mip, Tab instance, F11 group" << std::endl;
+}
+
+void VulkanContext::ConfigureAo(float radius,float bias,int samples) {
+    m_ScenePrepass->SetAo(radius,bias,samples);
+    std::cout << "[SSAO] radius " << radius << " bias " << bias << " samples " << samples << std::endl;
+}
+void VulkanContext::ConfigurePrepass(int mode,float range) {
+    // Updating descriptors invalidates recorded command buffers; SetPrepassEnabled re-records
+    // on every mode change, after the update and before the next submission.
+    if((m_ScenePrepass->Mode()==7)!=(mode==7)) {
+        if(vkDeviceWaitIdle(m_LogicalDevice->GetHandle())!=VK_SUCCESS) throw std::runtime_error("Cannot wait for AO composition toggle");
+        m_DescriptorManager->SetAoImage(mode==7?m_ScenePrepass->BlurredView():VK_NULL_HANDLE,m_ScenePrepass->Sampler());
+    }
+    m_ScenePrepass->SetMode(mode);m_ScenePrepass->SetDepthRange(range);
+    m_CommandManager->SetPrepassEnabled(m_ScenePrepass->Enabled(),mode>=5,mode);
+    static const char* names[]={"OFF","VIEW NORMAL","LINEAR DEPTH","WORLD NORMAL","PREPASS + SHADED","RAW SSAO","BLURRED SSAO","SSAO COMPOSITE"};
+    std::cout << "[Scene Prepass] " << names[mode] << " | depth display range " << range << std::endl;
+}
+VkExtent2D VulkanContext::Extent() const { return m_Swapchain->GetExtent(); }
+bool VulkanContext::NeedsRebuild() const { return m_Renderer->NeedsRebuild(); }
+
+std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
+    // Snapshot CPU state only. No Vulkan handle crosses the old device's lifetime.
+    auto fields=std::make_tuple(
+        std::make_pair(&VulkanContext::m_CameraTarget,m_CameraTarget),
+        std::make_pair(&VulkanContext::m_MaterialView,m_MaterialView),
+        std::make_pair(&VulkanContext::m_LightingView,m_LightingView),
+        std::make_pair(&VulkanContext::m_EnvironmentRotation,m_EnvironmentRotation),
+        std::make_pair(&VulkanContext::m_CullingFrozen,m_CullingFrozen),
+        std::make_pair(&VulkanContext::m_FrozenCameraValid,m_FrozenCameraValid),
+        std::make_pair(&VulkanContext::m_FrozenCamera,m_FrozenCamera),
+        std::make_pair(&VulkanContext::m_CullingEnabled,m_CullingEnabled),
+        std::make_pair(&VulkanContext::m_OcclusionEnabled,m_OcclusionEnabled),
+        std::make_pair(&VulkanContext::m_CameraYaw,m_CameraYaw),
+        std::make_pair(&VulkanContext::m_CameraPitch,m_CameraPitch),
+        std::make_pair(&VulkanContext::m_CameraDistance,m_CameraDistance),
+        std::make_pair(&VulkanContext::m_ShadowMode,m_ShadowMode),
+        std::make_pair(&VulkanContext::m_PointLightEnabled,m_PointLightEnabled),
+        std::make_pair(&VulkanContext::m_PointLightAnimationEnabled,m_PointLightAnimationEnabled),
+        std::make_pair(&VulkanContext::m_EnableSkybox,m_EnableSkybox),
+        std::make_pair(&VulkanContext::m_EnableEnvironmentLighting,m_EnableEnvironmentLighting),
+        std::make_pair(&VulkanContext::m_Exposure,m_Exposure),
+        std::make_pair(&VulkanContext::m_PointLightAngle,m_PointLightAngle),
+        std::make_pair(&VulkanContext::m_ManualPointLightPosition,m_ManualPointLightPosition),
+        std::make_pair(&VulkanContext::m_ManualPointLightControl,m_ManualPointLightControl));
+    const auto ao=m_ScenePrepass->AoSettings();
+    const int mode=m_ScenePrepass->Mode();const float range=m_ScenePrepass->DepthRange();
+    const bool inspect=m_HiZInspector && m_HiZInspector->Enabled();
+    const int group=inspect?m_HiZInspector->Group():0,selection=inspect?m_HiZInspector->Selection():-1,mip=inspect?m_HiZInspector->Mip():0;
+    return [fields,mode,range,inspect,group,selection,mip,ao](VulkanContext& context) {
+        std::apply([&](const auto&... member) { ((context.*(member.first)=member.second),...); },fields);
+        context.m_CommandManager->SetSkyboxEnabled(context.m_EnableSkybox);
+        context.ConfigureAo(ao.x,ao.y,int(ao.z));
+        context.ConfigurePrepass(mode,range);
+        context.ConfigureHiZInspector(inspect,selection,mip,group);
+    };
 }

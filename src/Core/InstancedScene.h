@@ -9,3 +9,6 @@ MeshData CreateStressSphere();
 std::vector<InstanceData> CreateMaterialInstances(uint32_t stressCount = 0);
 
 void AppendOcclusionWall(MeshData &scene);
+
+MeshData CreateStressCube();
+void AppendMixedInstances(MeshData& scene, uint32_t totalCount);

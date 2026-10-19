@@ -34,6 +34,8 @@ public:
 );
 
     ~DescriptorManager();
+    // Caller waits for GPU idle, then re-records command buffers after descriptor changes.
+    void SetAoImage(VkImageView view, VkSampler sampler);
 
     DescriptorManager(const DescriptorManager&) = delete;
     DescriptorManager& operator=(const DescriptorManager&) = delete;

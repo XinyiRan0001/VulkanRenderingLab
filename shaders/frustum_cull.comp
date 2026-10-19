@@ -6,11 +6,14 @@ layout(std430,binding=0) readonly buffer Input { InstanceData instances[]; };
 layout(std430,binding=1) writeonly buffer Visible { uint visibleIds[]; };
 layout(std430,binding=2) buffer Indirect { DrawCommand commands[]; };
 layout(std140,binding=3) uniform CullUniform {
-    vec4 planes[6]; vec4 localSphere; uvec4 settings;
+    vec4 planes[6]; uvec4 settings;
     mat4 clipFromScene; uvec4 hiZ;
 } cull;
 layout(binding=4) uniform sampler2D depthPyramid;
-layout(std430,binding=5) buffer Statistics { uint frustumCount; uint occludedCount; uint nearBypassCount; uint reserved; } stats;
+struct GroupStats { uint frustumCount; uint occludedCount; uint nearBypassCount; uint reserved; };
+layout(std430,binding=5) buffer Statistics { GroupStats stats[]; };
+struct CullBatch { vec4 localSphere; uvec4 instances; uvec4 commands; };
+layout(std430,binding=6) readonly buffer Groups { CullBatch groups[]; };
 
 bool FullyOccluded(vec3 center,float radius,out bool nearBypass) {
     nearBypass=false;
@@ -38,11 +41,15 @@ bool FullyOccluded(vec3 center,float radius,out bool nearBypass) {
 }
 
 void main() {
+    uint group=gl_WorkGroupID.y;
+    if(group>=cull.settings.z) return;
+    CullBatch batch=groups[group];
+    uint statIndex=batch.commands.z;
     uint offset=gl_GlobalInvocationID.x;
-    if(offset>=cull.settings.y) return;
-    uint id=cull.settings.x+offset;
+    if(offset>=batch.instances.y) return;
+    uint id=batch.instances.x+offset;
     mat4 model=instances[id].model;
-    vec3 center=(model*vec4(cull.localSphere.xyz,1.0)).xyz;
+    vec3 center=(model*vec4(batch.localSphere.xyz,1.0)).xyz;
     mat3 a=mat3(model);
     float norm1=0.0, normInf=0.0;
     for(int i=0;i<3;++i) {
@@ -50,17 +57,17 @@ void main() {
         for(int j=0;j<3;++j) { column+=abs(a[i][j]); row+=abs(a[j][i]); }
         norm1=max(norm1,column);normInf=max(normInf,row);
     }
-    float radius=cull.localSphere.w*sqrt(norm1*normInf);
+    float radius=batch.localSphere.w*sqrt(norm1*normInf);
     if(cull.settings.w!=0) for(int i=0;i<6;++i)
         if(dot(cull.planes[i].xyz,center)+cull.planes[i].w < -radius-1e-4) return;
-    atomicAdd(stats.frustumCount,1);
+    atomicAdd(stats[statIndex].frustumCount,1);
     if(cull.hiZ.w!=0) {
         bool nearBypass;
-        if(FullyOccluded(center,radius,nearBypass)) { atomicAdd(stats.occludedCount,1);return; }
-        if(nearBypass) atomicAdd(stats.nearBypassCount,1);
+        if(FullyOccluded(center,radius,nearBypass)) { atomicAdd(stats[statIndex].occludedCount,1);return; }
+        if(nearBypass) atomicAdd(stats[statIndex].nearBypassCount,1);
     }
     // A unique slot for each visible instance; execution order is not guaranteed.
-    uint slot=atomicAdd(commands[0].instanceCount,1);
-    visibleIds[slot]=id;
-    for(uint i=1;i<cull.settings.z;++i) atomicAdd(commands[i].instanceCount,1);
+    uint slot=atomicAdd(commands[batch.commands.x].instanceCount,1);
+    visibleIds[batch.instances.z+slot]=id;
+    for(uint i=1;i<batch.commands.y;++i) atomicAdd(commands[batch.commands.x+i].instanceCount,1);
 }

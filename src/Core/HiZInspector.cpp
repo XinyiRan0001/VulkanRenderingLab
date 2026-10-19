@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 namespace
@@ -28,18 +29,15 @@ HiZInspector::HiZInspector(const PhysicalDevice &physical, const LogicalDevice &
                            VkExtent2D extent, HiZ &hiZ, GpuCulling &culling, const MeshData &mesh)
     : m_Device(device), m_HiZ(hiZ), m_Culling(culling)
 {
-    for (const auto &sub : mesh.subMeshes)
-        if (sub.firstInstance > 0)
-        {
-            m_First = sub.firstInstance;
-            for (uint32_t i = 0; i < sub.instanceCount; ++i)
-                m_Spheres.push_back(TransformSphere(mesh.instances[m_First + i].model, sub.localSphere));
-            break;
-        }
-    if (m_Spheres.empty())
-        throw std::runtime_error("Inspector needs an instanced mesh");
-    m_Selection =
-        int(m_Spheres.size() / 2 + size_t(std::sqrt(double(m_Spheres.size()))) / 2) % int(m_Spheres.size());
+    for (const auto &batch : culling.Layout().batches)
+    {
+        std::vector<glm::vec4> spheres;
+        for (uint32_t i = 0; i < batch.instances.y; ++i)
+            spheres.push_back(
+                TransformSphere(mesh.instances[batch.instances.x + i].model, batch.localSphere));
+        m_GroupSpheres.push_back(std::move(spheres));
+    }
+    SelectGroup(0);
     m_Current.view = glm::ivec4(0, 0, extent.width, extent.height);
     const auto d = device.GetHandle();
     try
@@ -58,14 +56,15 @@ HiZInspector::HiZInspector(const PhysicalDevice &physical, const LogicalDevice &
             {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
              VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-             VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
+             VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}};
         VkDescriptorSetLayoutCreateInfo setLayout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        setLayout.bindingCount = 4;
+        setLayout.bindingCount = 5;
         setLayout.pBindings = bindings;
         Check(vkCreateDescriptorSetLayout(d, &setLayout, nullptr, &m_SetLayout));
         VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2},
                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
-                                        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
+                                        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
         VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pool.maxSets = 1;
         pool.poolSizeCount = 3;
@@ -77,10 +76,12 @@ HiZInspector::HiZInspector(const PhysicalDevice &physical, const LogicalDevice &
         alloc.pSetLayouts = &m_SetLayout;
         Check(vkAllocateDescriptorSets(d, &alloc, &m_Set));
         VkDescriptorImageInfo images[] = {hiZ.SampledPyramid(), hiZ.SampledDepth()};
-        VkDescriptorBufferInfo buffers[] = {{m_Uniform->GetHandle(), 0, sizeof(Settings)},
-                                            {m_Output->GetHandle(), 0, 16}};
-        std::array<VkWriteDescriptorSet, 4> writes{};
-        for (uint32_t i = 0; i < 4; ++i)
+        VkDescriptorBufferInfo buffers[] = {
+            {m_Uniform->GetHandle(), 0, sizeof(Settings)},
+            {m_Output->GetHandle(), 0, 16},
+            {m_Culling.StatisticsBuffer().GetHandle(), 0, m_Culling.StatisticsBuffer().GetSize()}};
+        std::array<VkWriteDescriptorSet, 5> writes{};
+        for (uint32_t i = 0; i < 5; ++i)
         {
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = m_Set;
@@ -92,7 +93,7 @@ HiZInspector::HiZInspector(const PhysicalDevice &physical, const LogicalDevice &
             else
                 writes[i].pBufferInfo = &buffers[i - 2];
         }
-        vkUpdateDescriptorSets(d, 4, writes.data(), 0, nullptr);
+        vkUpdateDescriptorSets(d, 5, writes.data(), 0, nullptr);
         VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         layout.setLayoutCount = 1;
         layout.pSetLayouts = &m_SetLayout;
@@ -203,13 +204,40 @@ void HiZInspector::StepMip(int delta)
 }
 void HiZInspector::Select(int offset)
 {
-    if (offset < 0 || offset >= int(m_Spheres.size()))
-        throw std::runtime_error("Inspector instance index out of range");
+    if (offset < 0 || offset >= int(m_GroupSpheres.at(m_Group).size()))
+        throw std::runtime_error("Inspector instance index out of range in selected group");
     m_Selection = offset;
 }
 void HiZInspector::StepSelection(int delta)
 {
-    m_Selection = (m_Selection + delta + int(m_Spheres.size())) % int(m_Spheres.size());
+    m_Selection = (m_Selection + delta + int(m_GroupSpheres.at(m_Group).size())) %
+                  int(m_GroupSpheres.at(m_Group).size());
+}
+void HiZInspector::SelectGroup(int group)
+{
+    if (group < 0 || group >= int(m_GroupSpheres.size()))
+        throw std::runtime_error("Inspector group index out of range");
+    m_Group = group;
+    const auto count = m_GroupSpheres[group].size();
+    m_Selection = int(count / 2 + size_t(std::sqrt(double(count))) / 2) % int(count);
+    if (m_GroupSpheres.size() > 1)
+    {
+        float best = std::numeric_limits<float>::max();
+        for (size_t i = 0; i < count; ++i)
+        {
+            const auto &center = m_GroupSpheres[group][i];
+            const float score = center.x * center.x + center.z * center.z;
+            if (score <= best)
+            {
+                best = score;
+                m_Selection = int(i);
+            }
+        }
+    }
+}
+void HiZInspector::StepGroup(int delta)
+{
+    SelectGroup((m_Group + delta + int(m_GroupSpheres.size())) % int(m_GroupSpheres.size()));
 }
 void HiZInspector::Update(const UniformBufferObject &culling, bool frustum, bool occlusion, bool verify)
 {
@@ -228,7 +256,10 @@ void HiZInspector::Update(const UniformBufferObject &culling, bool frustum, bool
                                  culling.proj[3][2], 1e-4f);
     m_Current.pixels = glm::vec4(glm::vec2(m_Footprint.pixelMinimum), glm::vec2(m_Footprint.pixelMaximum));
     m_Current.selection =
-        glm::ivec4(m_Selection, m_First + uint32_t(m_Selection), int(m_Footprint.bypass), 0);
+        glm::ivec4(m_Selection, m_Culling.Layout().batches[m_Group].instances.x + uint32_t(m_Selection),
+                   int(m_Footprint.bypass), m_Group);
+    m_Current.counts =
+        glm::ivec4(m_Culling.Layout().batches[m_Group].instances.y, m_GroupSpheres.size(), 0, 0);
     m_Current.view.x = m_Enabled ? 1 : 0;
     m_Current.view.y = m_Mip;
     m_Uniform->UploadData(&m_Current, sizeof(m_Current));
@@ -240,7 +271,7 @@ void HiZInspector::MarkSubmitted()
     m_Pending = true;
     m_Submitted = m_Current;
     m_SubmittedFootprint = m_Footprint;
-    m_SubmittedId = m_First + uint32_t(m_Selection);
+    m_SubmittedId = m_Culling.Layout().batches[m_Group].instances.x + uint32_t(m_Selection);
 }
 void HiZInspector::ReadCompleted()
 {
@@ -277,8 +308,8 @@ std::string HiZInspector::Status() const
     if (!m_HaveResult)
         return text.str() + " | awaiting query";
     static const char *states[] = {"FRUSTUM REJECT", "BYPASS", "VISIBLE", "OCCLUDED"};
-    text << " | Sphere " << m_ResultSettings.selection.x << " (ID " << m_ResultId << ")" << " "
-         << states[int(m_Result.w)];
+    text << " | " << m_Culling.Layout().names.at(m_ResultSettings.selection.w) << " object "
+         << m_ResultSettings.selection.x << " (ID " << m_ResultId << ")" << " " << states[int(m_Result.w)];
     if (m_ResultSettings.query.y)
     {
         text << " | query mip " << m_ResultSettings.query.x << std::fixed << std::setprecision(6)

@@ -166,3 +166,78 @@ void AppendOcclusionWall(MeshData &scene)
     wall.occluder = true;
     scene.subMeshes.push_back(wall);
 }
+
+MeshData CreateStressCube()
+{
+    MeshData mesh;
+    const glm::vec3 normals[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    for (const auto &normal : normals)
+    {
+        const auto tangent = std::abs(normal.y) > .5f
+                                 ? glm::vec3(1, 0, 0)
+                                 : glm::normalize(glm::cross(glm::vec3(0, 1, 0), normal));
+        const auto bitangent = glm::cross(normal, tangent);
+        const uint32_t first = uint32_t(mesh.vertices.size());
+        for (auto uv : {glm::vec2(0, 0), glm::vec2(1, 0), glm::vec2(1, 1), glm::vec2(0, 1)})
+        {
+            const auto position = normal + (uv.x * 2 - 1) * tangent + (uv.y * 2 - 1) * bitangent;
+            Vertex v{};
+            for (int i = 0; i < 3; ++i)
+            {
+                v.position[i] = position[i];
+                v.normal[i] = normal[i];
+                v.color[i] = 1;
+                v.tangent[i] = tangent[i];
+            }
+            v.texCoord[0] = uv.x;
+            v.texCoord[1] = uv.y;
+            mesh.vertices.push_back(v);
+        }
+        mesh.indices.insert(mesh.indices.end(), {first, first + 1, first + 2, first, first + 2, first + 3});
+    }
+    MaterialData blue, orange;
+    blue.diffuseColor[0] = .08f;
+    blue.diffuseColor[1] = .35f;
+    blue.diffuseColor[2] = .8f;
+    blue.metallic = .2f;
+    blue.roughness = .28f;
+    orange.diffuseColor[0] = .9f;
+    orange.diffuseColor[1] = .28f;
+    orange.diffuseColor[2] = .05f;
+    orange.metallic = .65f;
+    orange.roughness = .55f;
+    mesh.materials = {blue, orange};
+    mesh.subMeshes.push_back({0, 18, 0});
+    mesh.subMeshes.push_back({18, 18, 1});
+    return mesh;
+}
+void AppendMixedInstances(MeshData &scene, uint32_t totalCount)
+{
+    if (totalCount < 2 || totalCount > 10000)
+        throw std::runtime_error("Mixed scene accepts 2..10000 total instances");
+    auto sphere = CreateStressSphere();
+    auto cube = CreateStressCube();
+    for (auto &sub : sphere.subMeshes)
+        sub.instanceGroupName = "spheres";
+    for (auto &sub : cube.subMeshes)
+        sub.instanceGroupName = "cubes";
+    const auto positions = CreateMaterialInstances(totalCount);
+    const uint32_t side = uint32_t(std::ceil(std::sqrt(float(totalCount))));
+    std::vector<InstanceData> spheres, cubes;
+    for (uint32_t i = 0; i < totalCount; ++i)
+    {
+        auto instance = positions[i];
+        if (((i % side) + (i / side)) % 2 == 0)
+            spheres.push_back(instance);
+        else
+        {
+            // Mesh material ranges supply the two face colors; do not override them per instance.
+            instance.materialProperties.w = 0;
+            instance.model =
+                glm::rotate(instance.model, glm::radians(float((i % 7) * 9)), glm::vec3(0, 1, 0));
+            cubes.push_back(instance);
+        }
+    }
+    AppendInstancedMesh(scene, sphere, spheres);
+    AppendInstancedMesh(scene, cube, cubes);
+}

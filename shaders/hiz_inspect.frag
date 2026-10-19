@@ -1,8 +1,10 @@
 #version 450
 layout(binding=0) uniform sampler2D pyramid;
 layout(binding=1) uniform sampler2D rawDepth;
-layout(std140,binding=2) uniform Settings { ivec4 region; ivec4 query; vec4 depths; ivec4 view; vec4 pixels; ivec4 selection; } s;
+layout(std140,binding=2) uniform Settings { ivec4 region; ivec4 query; vec4 depths; ivec4 view; vec4 pixels; ivec4 selection; ivec4 counts; } s;
 layout(std430,binding=3) readonly buffer Result { vec4 result; };
+struct GroupStats { uint frustumCount; uint occludedCount; uint nearBypassCount; uint reserved; };
+layout(std430,binding=4) readonly buffer GroupStatistics { GroupStats stats[]; };
 layout(location=0) out vec4 outColor;
 float border(vec2 p,vec2 a,vec2 b,float thickness) {
     if(any(lessThan(p,a)) || any(greaterThan(p,b))) return 0;
@@ -64,8 +66,8 @@ bool label(vec2 p,vec2 origin,int which) {
  if(which==0) { const int chars[11]=int[](80,89,82,65,77,73,68,32,77,73,80); for(int i=0;i<11;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // RAW DEPTH
  if(which==1) { const int chars[9]=int[](82,65,87,32,68,69,80,84,72); for(int i=0;i<9;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
- // SPHERE
- if(which==2) { const int chars[6]=int[](83,80,72,69,82,69); for(int i=0;i<6;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
+ // OBJECT
+ if(which==2) { const int chars[6]=int[](79,66,74,69,67,84); for(int i=0;i<6;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // QUERY MIP
  if(which==3) { const int chars[9]=int[](81,85,69,82,89,32,77,73,80); for(int i=0;i<9;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // NEAR
@@ -88,14 +90,16 @@ bool label(vec2 p,vec2 origin,int which) {
  if(which==12) { const int chars[8]=int[](79,67,67,76,85,68,69,68); for(int i=0;i<8;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // CYAN BOUND / COLOR QUERY CELLS
  if(which==13) { const int chars[30]=int[](67,89,65,78,32,66,79,85,78,68,32,47,32,67,79,76,79,82,32,81,85,69,82,89,32,67,69,76,76,83); for(int i=0;i<30;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
- // PGUP/DN MIP  TAB SELECT
- if(which==14) { const int chars[23]=int[](80,71,85,80,47,68,78,32,77,73,80,32,32,84,65,66,32,83,69,76,69,67,84); for(int i=0;i<23;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
+ // F11 GROUP TAB OBJECT PGUP/DN MIP
+ if(which==14) { const int chars[32]=int[](70,49,49,32,71,82,79,85,80,32,84,65,66,32,79,66,74,69,67,84,32,80,71,85,80,47,68,78,32,77,73,80); for(int i=0;i<32;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // N/A
  if(which==15) { const int chars[3]=int[](78,47,65); for(int i=0;i<3;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // NEAR/EYE BYPASS
  if(which==16) { const int chars[15]=int[](78,69,65,82,47,69,89,69,32,66,89,80,65,83,83); for(int i=0;i<15;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  // OFFSCREEN BYPASS
  if(which==17) { const int chars[16]=int[](79,70,70,83,67,82,69,69,78,32,66,89,80,65,83,83); for(int i=0;i<16;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
+ // GROUP
+ if(which==18) { const int chars[5]=int[](71,82,79,85,80); for(int i=0;i<5;++i) if(letter(p,origin+vec2(i*8,0),chars[i])) return true; }
  return false;
 }
 bool number(vec2 p,vec2 origin,uint value,int digits) {
@@ -110,19 +114,22 @@ bool decimalDepth(vec2 p,vec2 origin,float value) {
     return number(p,origin,fixedValue/1000000u,1) || letter(p,origin+vec2(8,0),46) || number(p,origin+vec2(16,0),fixedValue%1000000u,6);
 }
 void main() {
-    vec2 origin=vec2(s.view.z-440,18),size=vec2(420,390);
+    vec2 origin=vec2(s.view.z-440,18),size=vec2(420,408);
     vec2 canvas=gl_FragCoord.xy-origin;
     if(any(lessThan(canvas,vec2(0))) || any(greaterThanEqual(canvas,size))) discard;
     vec3 state=result.w==3.0 ? vec3(1,.18,.1) : (result.w==0.0 ? vec3(1,.65,.1) : (result.w==1.0 ? vec3(.6,.6,.6):vec3(.2,1,.35)));
     vec3 textColor=vec3(.92);
     bool text=label(canvas,vec2(10,10),s.view.y<0?1:0);
     if(s.view.y>=0) text=text || number(canvas,vec2(110,10),uint(s.view.y),2);
+    text=text || label(canvas,vec2(210,10),18) || number(canvas,vec2(258,10),uint(s.selection.w),2);
     text=text || label(canvas,vec2(10,286),2) || number(canvas,vec2(66,286),uint(s.selection.x),6);
     text=text || label(canvas,vec2(138,286),3) || (s.query.y!=0?number(canvas,vec2(218,286),uint(s.query.x),2):label(canvas,vec2(218,286),15));
     text=text || label(canvas,vec2(10,302),4) || (s.query.y!=0?decimalDepth(canvas,vec2(50,302),result.x):label(canvas,vec2(50,302),15));
     text=text || label(canvas,vec2(138,302),5) || (s.query.y!=0?decimalDepth(canvas,vec2(170,302),result.y):label(canvas,vec2(170,302),15));
     text=text || label(canvas,vec2(10,318),6) || label(canvas,vec2(138,318),s.query.w!=0?7:8);
-    text=text || label(canvas,vec2(10,350),13) || label(canvas,vec2(10,366),14);
+    text=text || label(canvas,vec2(10,366),13) || label(canvas,vec2(10,382),14);
+    uint visible=stats[s.selection.w].frustumCount-stats[s.selection.w].occludedCount;
+    text=text || label(canvas,vec2(10,350),11) || number(canvas,vec2(74,350),visible,6) || letter(canvas,vec2(130,350),47) || number(canvas,vec2(146,350),uint(s.counts.x),6);
     int decision=int(result.w);
     bool statusText=label(canvas,vec2(10,334),decision==0?9:(decision==1?(s.selection.z==1?16:17):(decision==3?12:11)));
     vec2 p=canvas-vec2(8,30),imageSize=vec2(404,240);

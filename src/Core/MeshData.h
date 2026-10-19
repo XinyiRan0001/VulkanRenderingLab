@@ -5,6 +5,7 @@
 #include "TextureData.h"
 #include <array>
 
+#include <string>
 #include <cstdint>
 #include <vector>
 
@@ -23,6 +24,7 @@ struct SubMesh
     uint32_t firstInstance = 0;
     bool occluder = false;
     glm::vec4 localSphere{0.0f}; // prototype bounds, before instance/global transforms
+    std::string instanceGroupName; // optional debug label; grouping uses the instance range
 };
 
 // =========================================================
@@ -69,6 +71,7 @@ struct MaterialData
 //
 // flags.x = use base color texture; flags.y bits = normal, MR, AO, emissive
 // flags.z = main vertex shader uses compacted visible-instance IDs
+// flags.w = base offset of this group in the compacted visible-ID buffer
 // textureSettings.xy = normal scale, occlusion strength
 //
 // properties.x  = metallic

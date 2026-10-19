@@ -19,13 +19,18 @@ class HiZInspector
     {
         return m_Enabled;
     }
+    int Group() const { return m_Group; }
+    int Selection() const { return m_Selection; }
+    int Mip() const { return m_Mip; }
     void SetMip(int mip);
     void StepMip(int delta);
     void Select(int offset);
+    void SelectGroup(int group);
+    void StepGroup(int delta);
     void StepSelection(int delta);
     glm::vec4 SelectedSphere() const
     {
-        return m_Spheres.at(m_Selection);
+        return m_GroupSpheres.at(m_Group).at(m_Selection);
     }
     void Update(const UniformBufferObject &culling, bool frustum, bool occlusion, bool verify);
     void ReadCompleted();
@@ -37,20 +42,20 @@ class HiZInspector
   private:
     struct alignas(16) Settings
     {
-        glm::ivec4 region{}; // inclusive selected-mip cells
-        glm::ivec4 query{};  // query mip, valid, rejected by frustum, occlusion enabled
-        glm::vec4 depths{};  // nearest raw depth, projection A/B, epsilon
-        glm::ivec4 view{};   // enabled, preview mip (-1 raw depth), viewport width/height
-        glm::vec4 pixels{};
-        glm::ivec4 selection{}; // zero-based sphere offset, actual instance ID  // expanded pixel rectangle,
-                                // inclusive
+        glm::ivec4 region{};    // inclusive selected-mip cells
+        glm::ivec4 query{};     // query mip, valid, rejected by frustum, occlusion enabled
+        glm::vec4 depths{};     // nearest raw depth, projection A/B, epsilon
+        glm::ivec4 view{};      // enabled, preview mip (-1 raw depth), viewport width/height
+        glm::vec4 pixels{};     // expanded pixel rectangle, inclusive
+        glm::ivec4 selection{}; // offset within group, actual instance ID, bypass reason, group
+        glm::ivec4 counts{};    // selected-group capacity, group count
     };
-    static_assert(sizeof(Settings) == 96, "Inspector std140 mismatch");
+    static_assert(sizeof(Settings) == 112, "Inspector std140 mismatch");
     const LogicalDevice &m_Device;
     HiZ &m_HiZ;
     GpuCulling &m_Culling;
-    std::vector<glm::vec4> m_Spheres;
-    uint32_t m_First = 0;
+    std::vector<std::vector<glm::vec4>> m_GroupSpheres;
+    int m_Group = 0;
     int m_Selection = 0, m_Mip = 0;
     bool m_Enabled = false, m_Pending = false, m_Verify = false, m_HaveResult = false;
     uint32_t m_SubmittedId = 0, m_ResultId = 0;

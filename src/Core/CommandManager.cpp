@@ -33,7 +33,7 @@ CommandManager::CommandManager(
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
     const std::vector<MaterialData>& materials,
-    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector
+    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -52,6 +52,7 @@ CommandManager::CommandManager(
     m_HiZ(hiZ),
     m_Debug(debug),
     m_Inspector(inspector),
+    m_Prepass(prepass),m_MainDepth(mainDepth),
     m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
@@ -162,7 +163,7 @@ void CommandManager::CreateTimestampQueryPool()
     queryPoolInfo.queryType =
         VK_QUERY_TYPE_TIMESTAMP;
 
-    queryPoolInfo.queryCount = 8;
+    queryPoolInfo.queryCount = 14;
 
     VkResult result = vkCreateQueryPool(
         m_LogicalDevice.GetHandle(),
@@ -246,8 +247,17 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             m_TimestampQueryPool,
             0,
-            8
+            14
         );
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,8);
+        if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,9);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,10);
+        if(m_Prepass && m_RawAoEnabled && !m_BenchmarkMode) m_Prepass->RecordAo(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,11);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,12);
+        if(m_Prepass && m_RawAoEnabled && !m_BenchmarkMode) m_Prepass->RecordBlur(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,13);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,6);
         if (m_HiZ && m_RunHiZ) m_HiZ->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,7);
@@ -588,6 +598,7 @@ void CommandManager::RecordCommandBuffers()
 
             const bool gpuDriven = m_Culling && m_RunCulling && subMesh.firstInstance > 0;
             materialPushConstants.flags.z = gpuDriven ? 1 : 0;
+            if (gpuDriven) materialPushConstants.flags.w = int(m_Culling->DrawAddress(indirectIndex).visibleBase);
             vkCmdPushConstants(
                 m_CommandBuffers[i],
                 m_GraphicsPipeline.GetLayout(),
@@ -599,7 +610,7 @@ void CommandManager::RecordCommandBuffers()
 
             if (gpuDriven) {
                 vkCmdDrawIndexedIndirect(m_CommandBuffers[i],m_Culling->IndirectBuffer().GetHandle(),
-                    VkDeviceSize(indirectIndex++)*sizeof(VkDrawIndexedIndirectCommand),1,sizeof(VkDrawIndexedIndirectCommand));
+                    VkDeviceSize(m_Culling->DrawAddress(indirectIndex++).command)*sizeof(VkDrawIndexedIndirectCommand),1,sizeof(VkDrawIndexedIndirectCommand));
             } else vkCmdDrawIndexed(
                 m_CommandBuffers[i],
                 subMesh.indexCount,
@@ -612,9 +623,12 @@ void CommandManager::RecordCommandBuffers()
 
         if (m_Debug && !m_BenchmarkMode) m_Debug->Record(m_CommandBuffers[i]);
         if (m_Inspector && m_InspectorEnabled && !m_BenchmarkMode) m_Inspector->RecordPanel(m_CommandBuffers[i]);
+        if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->RecordPreview(m_CommandBuffers[i]);
         vkCmdEndRenderPass(
             m_CommandBuffers[i]
         );
+
+        if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->RecordReadback(m_CommandBuffers[i],m_MainDepth);
 
         vkCmdWriteTimestamp(
             m_CommandBuffers[i],
@@ -646,7 +660,7 @@ bool CommandManager::GetGpuTimingResult(
     GpuTimingResult& result
 ) const
 {
-    std::array<uint64_t, 8> timestamps{};
+    std::array<uint64_t, 14> timestamps{};
 
     VkResult queryResult = vkGetQueryPoolResults(
         m_LogicalDevice.GetHandle(),
@@ -686,12 +700,15 @@ bool CommandManager::GetGpuTimingResult(
 
     const double totalNanoseconds =
         static_cast<double>(
-            timestamps[3] - timestamps[6]
+            timestamps[3] - timestamps[8]
             ) * nanosecondsPerTick;
 
     constexpr double nanosecondsToMilliseconds =
         1.0 / 1000000.0;
 
+    result.blurMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[13]-timestamps[12])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
+    result.ssaoMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[11]-timestamps[10])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
+    result.prepassMs = m_PrepassEnabled && !m_BenchmarkMode ? double(timestamps[9]-timestamps[8])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
     result.hiZPassMs = double(timestamps[7]-timestamps[6])*nanosecondsPerTick*nanosecondsToMilliseconds;
     result.cullingPassMs = double(timestamps[5]-timestamps[4])*nanosecondsPerTick*nanosecondsToMilliseconds;
     result.shadowPassMs =
@@ -770,4 +787,10 @@ void CommandManager::SetInspectorEnabled(bool enabled) {
     if(vkDeviceWaitIdle(m_LogicalDevice.GetHandle())!=VK_SUCCESS) throw std::runtime_error("Cannot wait for inspector toggle");
     m_InspectorEnabled=enabled;
     RecordCommandBuffers();
+}
+
+void CommandManager::SetPrepassEnabled(bool enabled,bool rawAo,int debugMode) {
+    if(m_PrepassEnabled==enabled && m_RawAoEnabled==rawAo && m_PrepassMode==debugMode) return;
+    if(vkDeviceWaitIdle(m_LogicalDevice.GetHandle())!=VK_SUCCESS) throw std::runtime_error("Cannot wait for prepass toggle");
+    m_PrepassEnabled=enabled;m_RawAoEnabled=rawAo;m_PrepassMode=debugMode;RecordCommandBuffers();
 }

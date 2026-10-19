@@ -24,6 +24,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <memory>
+#include <functional>
 
 
 class Window;
@@ -36,6 +37,7 @@ class CommandManager;
 class Renderer;
 class GpuCulling;
 class HiZ;
+class ScenePrepass;
 class HiZInspector;
 class FrustumDebug;
 class GraphicsPipeline;
@@ -52,9 +54,14 @@ class SkyboxPipeline;
 class VulkanContext
 {
 public:
-    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false);
+    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false);
     ~VulkanContext();
     void UpdateUniformBuffer();
+    void ConfigurePrepass(int mode,float range=10.f);
+    void ConfigureAo(float radius,float bias,int samples);
+    VkExtent2D Extent() const;
+    bool NeedsRebuild() const;
+    std::function<void(VulkanContext&)> SaveRuntimeState() const;
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
 
@@ -66,7 +73,7 @@ public:
     void CaptureNextFrame(const std::string& path);
     void ConfigureCullingCamera(float distance, float targetOffsetX);
     void StartCullingObserver();
-    void ConfigureHiZInspector(bool enabled, int instance = -1, int mip = 0);
+    void ConfigureHiZInspector(bool enabled, int instance = -1, int mip = 0, int group = 0);
     void RunCullingBenchmark(const std::string& path, int warmup, int samples, int repeats, bool captures = false);
     void SetOcclusion(bool enabled) { m_OcclusionEnabled=enabled; }
     void SetCulling(bool enabled, bool verify);
@@ -76,6 +83,7 @@ public:
 private:
     Window& m_Window;
     bool m_IsGltfScene = false;
+    bool m_MixedScene = false;
 
     VkInstance m_Instance = VK_NULL_HANDLE;
     VkSurfaceKHR m_Surface = VK_NULL_HANDLE;
@@ -100,6 +108,7 @@ private:
     std::unique_ptr<Buffer> m_UniformBuffer;
     std::unique_ptr<Buffer> m_InstanceBuffer;
     std::unique_ptr<HiZ> m_HiZ;
+    std::unique_ptr<ScenePrepass> m_ScenePrepass;
     std::unique_ptr<HiZInspector> m_HiZInspector;
     std::unique_ptr<GpuCulling> m_GpuCulling;
     std::unique_ptr<TextureImage> m_TextureImage;

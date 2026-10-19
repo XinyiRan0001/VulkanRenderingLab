@@ -199,7 +199,7 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
 
     const std::array<
         VkDescriptorSetLayoutBinding,
-        14
+        15
     > bindings =
     {
         uboBinding,
@@ -215,7 +215,8 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
         {10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
         {12, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
-        {13, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr}
+        {13, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr},
+        {14, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}
     };
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};

@@ -69,7 +69,7 @@ void Renderer::WaitForFrame() const
         throw std::runtime_error("Failed waiting for the frame before updating uniforms.");
 }
 
-void Renderer::DrawFrame()
+bool Renderer::DrawFrame()
 {
 
     VkDevice device = m_LogicalDevice.GetHandle();
@@ -205,6 +205,9 @@ void Renderer::DrawFrame()
             // Regular 0.5-second GPU timing average
             // =========================================================
 
+            m_PrepassTimingAccumulator += timing.prepassMs;
+            m_SsaoTimingAccumulator += timing.ssaoMs;
+            m_BlurTimingAccumulator += timing.blurMs;
             m_HiZTimingAccumulator += timing.hiZPassMs;
             m_CullingTimingAccumulator += timing.cullingPassMs;
             m_ShadowTimingAccumulator +=
@@ -245,7 +248,7 @@ void Renderer::DrawFrame()
                     << std::fixed
                     << std::setprecision(3)
                     << "[GPU Timing Average] "
-                    << "HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
+                    << "Prepass: " << m_PrepassTimingAccumulator / sampleCount << " ms | SSAO: " << m_SsaoTimingAccumulator / sampleCount << " ms | Blur: " << m_BlurTimingAccumulator / sampleCount << " ms | HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
                     << averageShadowMs
                     << " ms | Main: "
                     << averageMainMs
@@ -255,6 +258,9 @@ void Renderer::DrawFrame()
                     << m_GpuTimingSampleCount
                     << std::endl;
 
+                m_PrepassTimingAccumulator = 0.0;
+                m_SsaoTimingAccumulator = 0.0;
+                m_BlurTimingAccumulator = 0.0;
                 m_HiZTimingAccumulator = 0.0;
                 m_CullingTimingAccumulator = 0.0;
                 m_ShadowTimingAccumulator = 0.0;
@@ -282,7 +288,7 @@ void Renderer::DrawFrame()
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
         if (m_Quiet) throw std::runtime_error("Swapchain changed during benchmark; rerun with a fixed window");
-        return;
+        m_NeedsRebuild=true;return false;
     }
 
     if (acquireResult != VK_SUCCESS &&
@@ -300,12 +306,7 @@ void Renderer::DrawFrame()
         &m_InFlightFence
     );
 
-    if (acquireResult != VK_SUCCESS)
-    {
-        throw std::runtime_error(
-            "Failed to acquire swapchain image."
-        );
-    }
+    if(acquireResult==VK_SUBOPTIMAL_KHR) m_NeedsRebuild=true;
 
     VkSemaphore waitSemaphores[] =
     {
@@ -393,12 +394,14 @@ void Renderer::DrawFrame()
             m_LogicalDevice.GetPresentQueue(),
             &presentInfo
         );
+    if(presentResult==VK_ERROR_OUT_OF_DATE_KHR || presentResult==VK_SUBOPTIMAL_KHR) { m_NeedsRebuild=true;return true; }
     if (presentResult != VK_SUCCESS)
     {
         throw std::runtime_error(
             "Failed to present swapchain image."
         );
     }
+    return true;
 }
 
 void Renderer::StartBenchmark(int shadowMode)

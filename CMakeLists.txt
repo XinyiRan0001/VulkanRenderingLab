@@ -16,7 +16,9 @@ add_executable(VulkanRenderingLab
     src/Core/GLTFLoader.cpp
     src/Core/InstancedScene.cpp
     src/Core/GpuCulling.cpp
+    src/Core/CullingBatches.cpp
     src/Core/HiZ.cpp
+    src/Core/ScenePrepass.cpp
     src/Core/HiZInspector.cpp
     src/Core/CullingBenchmark.cpp
     src/Core/FrustumDebug.cpp
@@ -187,4 +189,11 @@ if(BUILD_TESTING)
     add_executable(BenchmarkStatsTests tests/BenchmarkStatsTests.cpp)
     target_include_directories(BenchmarkStatsTests PRIVATE src)
     add_test(NAME BenchmarkStatsTests COMMAND BenchmarkStatsTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(CullingBatchesTests tests/CullingBatchesTests.cpp src/Core/CullingBatches.cpp src/Core/InstancedScene.cpp)
+    target_include_directories(CullingBatchesTests PRIVATE src)
+    target_link_libraries(CullingBatchesTests PRIVATE Vulkan::Vulkan glfw glm::glm)
+    add_test(NAME CullingBatchesTests COMMAND CullingBatchesTests)
 endif()

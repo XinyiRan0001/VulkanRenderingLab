@@ -20,7 +20,8 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    void DrawFrame();
+    bool DrawFrame();
+    bool NeedsRebuild() const { return m_NeedsRebuild; }
     void CaptureNextFrame(const std::string& path) { m_CapturePath = path; }
     void WaitForFrame() const;
     void StartBenchmark(int shadowMode);
@@ -38,9 +39,13 @@ private:
     std::string m_CapturePath;
     bool m_HasSubmittedFrame = false;
     bool m_Quiet = false;
+    bool m_NeedsRebuild = false;
     int m_BenchmarkShadowMode = 0;
 
     double m_GpuTimingAccumulator = 0.0;
+    double m_BlurTimingAccumulator = 0.0;
+    double m_SsaoTimingAccumulator = 0.0;
+    double m_PrepassTimingAccumulator = 0.0;
     double m_HiZTimingAccumulator = 0.0;
     double m_CullingTimingAccumulator = 0.0;
     double m_ShadowTimingAccumulator = 0.0;

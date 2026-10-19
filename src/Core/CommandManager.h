@@ -21,6 +21,7 @@
 #include <vector>
 #include "GpuCulling.h"
 #include "HiZ.h"
+#include "ScenePrepass.h"
 #include "HiZInspector.h"
 #include "FrustumDebug.h"
 
@@ -29,6 +30,9 @@ class CommandManager
 public:
     struct GpuTimingResult
     {
+        double prepassMs = 0.0;
+        double ssaoMs = 0.0;
+        double blurMs = 0.0;
         double hiZPassMs = 0.0;
         double cullingPassMs = 0.0;
         double shadowPassMs = 0.0;
@@ -52,7 +56,7 @@ public:
         const DescriptorManager& descriptorManager,
         const std::vector<SubMesh>& subMeshes,
         const std::vector<MaterialData>& materials,
-        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr
+        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr, ScenePrepass* prepass = nullptr, VkImage mainDepth = VK_NULL_HANDLE
     );
     ~CommandManager();
 
@@ -75,6 +79,7 @@ public:
 
     void CaptureFrame(uint32_t imageIndex, const std::string& path) const;
     void SetSkyboxEnabled(bool enabled);
+    void SetPrepassEnabled(bool enabled, bool rawAo=false, int debugMode=0);
     void SetInspectorEnabled(bool enabled);
     void SetBenchmarkMode(int mode); // 0 direct, 1 frustum, 2 frustum + full Hi-Z
 
@@ -96,6 +101,10 @@ private:
 
     GpuCulling* m_Culling = nullptr;
     HiZ* m_HiZ = nullptr;
+    ScenePrepass* m_Prepass = nullptr;
+    VkImage m_MainDepth = VK_NULL_HANDLE;
+    bool m_PrepassEnabled = false, m_RawAoEnabled=false;
+    int m_PrepassMode=0;
     FrustumDebug* m_Debug = nullptr;
     HiZInspector* m_Inspector = nullptr;
     bool m_InspectorEnabled = false;
