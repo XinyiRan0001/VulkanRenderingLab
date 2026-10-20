@@ -9,6 +9,12 @@ Each glTF embeds its buffer, so no external binary or image is required.
   from yaw 45 / pitch 25 exposes both surfaces. Their join should be occluded,
   while distant areas remain white.
 
+- `tilted-corner.gltf`: the floor/wall join rotated 20 degrees about Z. Yaw 20,
+  pitch 9 exposes a grazing-angle receiver for comparing plane and Z guidance.
+- `thin-layers.gltf`: three 0.05-unit foreground strips in front of a parallel
+  background, separated by 1.7 units. Equal normals must not hide the distinct
+  depth layers; inspect strip silhouettes and floor contacts.
+
 Run from the repository root:
 
 ```powershell
@@ -16,8 +22,18 @@ Run from the repository root:
 .\build\Release\VulkanRenderingLab.exe --scene assets/models/ssao-validation/corner.gltf --ssao-view --paused --yaw 45 --pitch 25
 ```
 
-The script verifies actual GPU AO values at camera distances 3.5 and 6, with
+The script verifies actual GPU AO values at camera distances 3.5 and 6, then
+checks both blur guidance modes on the tilted and thin-layer fixtures, with
 Vulkan synchronization validation and attachment readback. It checks covered
 pixels, finite bounded values, white background, a white isolated plane and
-nontrivial corner occlusion. These are correctness checks, not a performance
+nontrivial corner occlusion. The extra cases require covered GPU blur samples
+and successful CPU reference comparisons, including background rejection. They
+do not assert that one guidance mode improves every image. These are correctness checks, not a performance
 benchmark or a complete perceptual-quality test.
+
+
+`tools/verify-ssao-resolution.ps1` runs plane/corner/thin-layer cases at 641×361
+in full and half modes. It checks all closest-surface representative indices,
+AO ranges/backgrounds and sparse CPU filter/resolve references. Half images are
+321×181, including partial edge blocks. This is a correctness suite, not a timing
+benchmark or a claim of perfect contour quality.

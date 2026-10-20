@@ -4,9 +4,10 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <cstring>
 
-LogicalDevice::LogicalDevice(const PhysicalDevice& physicalDevice)
-    : m_PhysicalDevice(physicalDevice)
+LogicalDevice::LogicalDevice(const PhysicalDevice& physicalDevice, bool rayQuery)
+    : m_PhysicalDevice(physicalDevice),m_RayQuery(rayQuery)
 {
     CreateLogicalDevice();
 
@@ -61,12 +62,37 @@ void LogicalDevice::CreateLogicalDevice()
     {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
+    VkPhysicalDeviceBufferDeviceAddressFeatures address{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+    VkPhysicalDeviceRayQueryFeaturesKHR query{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+    uint32_t extensionCount=0;vkEnumerateDeviceExtensionProperties(m_PhysicalDevice.GetHandle(),nullptr,&extensionCount,nullptr);
+    std::vector<VkExtensionProperties> available(extensionCount);vkEnumerateDeviceExtensionProperties(m_PhysicalDevice.GetHandle(),nullptr,&extensionCount,available.data());
+    bool extensions=true;
+    for(const char* name:{VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,VK_KHR_RAY_QUERY_EXTENSION_NAME,VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME}){
+        bool found=false;for(const auto& e:available)found|=std::strcmp(e.extensionName,name)==0;
+        extensions &= found;
+        std::cout<<"[Ray Query Capability] "<<name<<" "<<(found?"YES":"NO")<<'\n';
+        if(m_RayQuery)deviceExtensions.push_back(name);
+    }
+    if(extensions && m_PhysicalDevice.GetProperties().apiVersion>=VK_API_VERSION_1_2){
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&address;address.pNext=&acceleration;acceleration.pNext=&query;
+        vkGetPhysicalDeviceFeatures2(m_PhysicalDevice.GetHandle(),&features);
+    }
+    const bool supported=extensions&&address.bufferDeviceAddress&&acceleration.accelerationStructure&&query.rayQuery;
+    std::cout<<"[Ray Query Capability] bufferDeviceAddress="<<address.bufferDeviceAddress<<" accelerationStructure="<<acceleration.accelerationStructure<<" rayQuery="<<query.rayQuery<<" requested="<<m_RayQuery<<'\n';
+    if(m_RayQuery&&!supported)throw std::runtime_error("Ray Query scene requires Vulkan 1.2+, acceleration structures, buffer device addresses and rayQuery; see capability log");
+    // Enable only the features actually used, not every optional queried feature.
+    address={VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES};address.bufferDeviceAddress=VK_TRUE;
+    acceleration={VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};acceleration.accelerationStructure=VK_TRUE;
+    query={VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};query.rayQuery=VK_TRUE;
+    address.pNext=&acceleration;acceleration.pNext=&query;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.queueCreateInfoCount = 1;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
     createInfo.pEnabledFeatures = &deviceFeatures;
+    createInfo.pNext=m_RayQuery?&address:nullptr;
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 

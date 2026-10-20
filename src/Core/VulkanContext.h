@@ -25,8 +25,11 @@
 #include <glm/glm.hpp>
 #include <memory>
 #include <functional>
+#include "AnimationControls.h"
 
 
+class AnimationRig;
+class GpuSkinning;
 class Window;
 class PhysicalDevice;
 class LogicalDevice;
@@ -41,6 +44,8 @@ class ScenePrepass;
 class HiZInspector;
 class FrustumDebug;
 class GraphicsPipeline;
+class AnimationPanel;
+class RayQueryReflections;
 class Buffer;
 class Image;
 class DescriptorManager;
@@ -54,13 +59,31 @@ class SkyboxPipeline;
 class VulkanContext
 {
 public:
-    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false);
+    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false, bool halfAo=false, bool aoMotionScene=false, const std::string& animatedPath="", bool rayScene=false, bool verifyRay=false);
     ~VulkanContext();
     void UpdateUniformBuffer();
     void ConfigurePrepass(int mode,float range=10.f);
-    void ConfigureAo(float radius,float bias,int samples);
+    void ResetMotionHistory();
+    void SetTemporalAo(bool enabled);
+    void SetVaryingAoSampling(bool enabled);
+    void SetAoHistoryView(int mode);
+    void SetAdaptiveAo(bool enabled);
+    void SetMotionTestOffset(float offset);
+    void SetAoBoxOffset(float offset);
+    void SetAnimationClip(const std::string& name);
+    void SetDualQuaternionSkinning(bool enabled);
+    void SetSurfaceSkinningNormals(bool enabled);
+    void SetAnimationTime(float seconds){m_AnimationControls.Seek(seconds);}
+    void AdvanceAnimation(double seconds){if(m_AnimationRig)m_AnimationControls.Advance(seconds);}
+    AnimationControls* Playback(){return m_AnimationRig?&m_AnimationControls:nullptr;}
+    void SetRayReflections(bool enabled,int debug=0);
+    void ConfigureAo(float radius,float bias,int samples,bool planeAware=true);
     VkExtent2D Extent() const;
     bool NeedsRebuild() const;
+    void StartAoTiming(const std::string& path,int warmup,int samples);
+    bool AoTimingActive() const { return m_AoTimingActive; }
+    bool HalfAo() const { return m_HalfAo; }
+    void SetHalfAo(bool half) { if(m_HalfAo!=half){m_HalfAo=half;m_AoRebuild=true;} }
     std::function<void(VulkanContext&)> SaveRuntimeState() const;
     VulkanContext(const VulkanContext&) = delete;
     VulkanContext& operator=(const VulkanContext&) = delete;
@@ -81,6 +104,16 @@ public:
     void SetInspection(int materialView, int lightingView, float environmentDegrees);
 
 private:
+    std::unique_ptr<AnimationRig> m_AnimationRig;
+    std::unique_ptr<GpuSkinning> m_Skinning;
+    std::unique_ptr<AnimationPanel> m_AnimationPanel;
+    AnimationControls m_AnimationControls;
+    bool AnimationPointer(double x,double y,int action);
+    size_t m_AnimationClip=0;
+    float m_AnimationTime=0;
+    glm::mat4 m_MotionTestBase{1};
+    bool m_MotionTestInitialized=false;
+    bool m_HalfAo=false,m_AoRebuild=false,m_AoTimingActive=false;
     Window& m_Window;
     bool m_IsGltfScene = false;
     bool m_MixedScene = false;
@@ -91,6 +124,7 @@ private:
 
     std::unique_ptr<PhysicalDevice> m_PhysicalDevice;
     std::unique_ptr<LogicalDevice> m_LogicalDevice;
+    std::unique_ptr<RayQueryReflections> m_Reflections;
     std::unique_ptr<Swapchain> m_Swapchain;
     std::unique_ptr<RenderPass> m_RenderPass;
     std::unique_ptr<DescriptorSetLayout>

@@ -96,6 +96,10 @@ bool Renderer::DrawFrame()
 
         if (m_CommandManager.GetGpuTimingResult(timing))
         {
+            if(m_AoTimingFile.is_open() && ++m_AoTimingSeen>m_AoTimingWarmup && m_AoTimingWritten<m_AoTimingExpected) {
+                m_AoTimingFile<<std::setprecision(10)<<m_AoTimingWritten<<','<<timing.skinningMs<<','<<timing.prepassMs<<','<<timing.ssaoMs<<','<<timing.blurMs<<','<<timing.resolveMs<<','<<timing.temporalMs<<','<<timing.mainPassMs<<','<<timing.totalGpuMs<<'\n';
+                ++m_AoTimingWritten;
+            }
             // =========================================================
             // Benchmark accumulation
             // =========================================================
@@ -208,6 +212,10 @@ bool Renderer::DrawFrame()
             m_PrepassTimingAccumulator += timing.prepassMs;
             m_SsaoTimingAccumulator += timing.ssaoMs;
             m_BlurTimingAccumulator += timing.blurMs;
+            m_ResolveTimingAccumulator += timing.resolveMs;
+            m_TemporalTimingAccumulator += timing.temporalMs;
+            m_SkinningTimingAccumulator+=timing.skinningMs;
+            m_AccelerationTimingAccumulator+=timing.accelerationUpdateMs;
             m_HiZTimingAccumulator += timing.hiZPassMs;
             m_CullingTimingAccumulator += timing.cullingPassMs;
             m_ShadowTimingAccumulator +=
@@ -248,7 +256,7 @@ bool Renderer::DrawFrame()
                     << std::fixed
                     << std::setprecision(3)
                     << "[GPU Timing Average] "
-                    << "Prepass: " << m_PrepassTimingAccumulator / sampleCount << " ms | SSAO: " << m_SsaoTimingAccumulator / sampleCount << " ms | Blur: " << m_BlurTimingAccumulator / sampleCount << " ms | HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
+                    << "Skinning: " << m_SkinningTimingAccumulator / sampleCount << " ms | AS Update: " << m_AccelerationTimingAccumulator / sampleCount << " ms | Prepass: " << m_PrepassTimingAccumulator / sampleCount << " ms | SSAO: " << m_SsaoTimingAccumulator / sampleCount << " ms | Blur: " << m_BlurTimingAccumulator / sampleCount << " ms | Resolve: " << m_ResolveTimingAccumulator / sampleCount << " ms | Temporal: " << m_TemporalTimingAccumulator / sampleCount << " ms | HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
                     << averageShadowMs
                     << " ms | Main: "
                     << averageMainMs
@@ -261,6 +269,10 @@ bool Renderer::DrawFrame()
                 m_PrepassTimingAccumulator = 0.0;
                 m_SsaoTimingAccumulator = 0.0;
                 m_BlurTimingAccumulator = 0.0;
+                m_ResolveTimingAccumulator = 0.0;
+                m_TemporalTimingAccumulator = 0.0;
+                m_SkinningTimingAccumulator=0;
+                m_AccelerationTimingAccumulator=0;
                 m_HiZTimingAccumulator = 0.0;
                 m_CullingTimingAccumulator = 0.0;
                 m_ShadowTimingAccumulator = 0.0;
@@ -462,4 +474,17 @@ void Renderer::StartBenchmark(int shadowMode)
         << " | Mode: "
         << benchmarkModeName
         << std::endl;
+}
+void Renderer::StartAoTiming(const std::string& path,int warmup,int samples,const std::string& metadata) {
+    if(warmup<0||samples<2)throw std::runtime_error("Invalid AO timing sample counts");
+    m_AoTimingFile.open(path,std::ios::trunc);if(!m_AoTimingFile)throw std::runtime_error("Cannot create AO timing CSV");
+    m_AoTimingFile<<"# "<<metadata<<" warmup="<<warmup<<" measured="<<samples<<"\nframe,skinning_ms,prepass_ms,ssao_ms,blur_ms,resolve_ms,temporal_ms,main_ms,total_ms\n";
+    m_AoTimingWarmup=warmup;m_AoTimingExpected=samples;m_AoTimingSeen=m_AoTimingWritten=0;m_Quiet=true;
+}
+void Renderer::FinishAoTiming() {
+    if(!m_AoTimingFile.is_open())return;
+    m_AoTimingFile.flush();if(!m_AoTimingFile)throw std::runtime_error("Cannot write AO timing CSV");
+    if(m_AoTimingWritten!=m_AoTimingExpected)throw std::runtime_error("Incomplete AO timing capture");
+    std::cout<<"[AO Timing] complete warmup "<<m_AoTimingWarmup<<" samples "<<m_AoTimingWritten<<std::endl;
+    m_AoTimingFile.close();
 }

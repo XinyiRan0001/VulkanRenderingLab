@@ -3,5 +3,5 @@
 #include <string>
 class GLTFLoader {
 public:
-    static MeshData Load(const std::string& path);
+    static MeshData Load(const std::string& path, bool animationMaterialsOnly=false);
 };

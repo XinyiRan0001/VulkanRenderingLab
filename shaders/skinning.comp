@@ -1,0 +1,62 @@
+#version 450
+layout(local_size_x=64) in;
+struct Input {vec4 position;vec4 normal;uvec4 joints;vec4 weights;uvec4 meta;uvec4 surface;};
+struct Delta {vec4 position;vec4 normal;};
+layout(std430,binding=0) readonly buffer Inputs {Input vertices[];};
+// Twelve vec4 per bone: two matrices, then current/previous real+dual quaternions.
+layout(std430,binding=1) readonly buffer Poses {vec4 poses[];};
+layout(std430,binding=2) readonly buffer Deltas {Delta deltas[];};
+layout(std430,binding=3) buffer Output {float outputData[];};
+layout(push_constant) uniform Settings {uint count;uint previousOffset;uint dualQuaternion;uint surfacePass;} settings;
+mat4 palette(uint index,bool previous){uint b=index*12+(previous?4:0);return mat4(poses[b],poses[b+1],poses[b+2],poses[b+3]);}
+vec4 multiplyQuaternion(vec4 a,vec4 b){return vec4(a.w*b.xyz+b.w*a.xyz+cross(a.xyz,b.xyz),a.w*b.w-dot(a.xyz,b.xyz));}
+vec3 rotateQuaternion(vec4 q,vec3 p){return p+2.0*cross(q.xyz,cross(q.xyz,p)+q.w*p);}
+bool dualDeform(Input v,bool previous,vec3 p,vec3 n,out vec3 position,out vec3 normal){
+    int reference=0;
+    for(int k=1;k<4;++k)if(v.weights[k]>v.weights[reference])reference=k;
+    uint offset=8+(previous?2:0);
+    vec4 anchor=poses[(v.meta.x+v.joints[reference])*12+offset];
+    vec4 real=vec4(0),dual=vec4(0);
+    for(int k=0;k<4;++k){
+        if(v.weights[k]<=0)continue;
+        uint b=(v.meta.x+v.joints[k])*12+offset;
+        vec4 q=poses[b];if(dot(q,q)<.5)return false;
+        float w=v.weights[k]*(dot(anchor,q)<0?-1.0:1.0);
+        real+=q*w;dual+=poses[b+1]*w;
+    }
+    float magnitude=length(real);if(magnitude<1e-8)return false;
+    real/=magnitude;dual/=magnitude;dual-=real*dot(real,dual);
+    vec3 translation=2.0*multiplyQuaternion(dual,vec4(-real.xyz,real.w)).xyz;
+    position=rotateQuaternion(real,p)+translation;
+    normal=rotateQuaternion(real,n);
+    normal=dot(normal,normal)>1e-12?normalize(normal):vec3(0,1,0);
+    return true;
+}
+vec3 deform(Input v,bool previous,out vec3 normal){
+    vec3 p=v.position.xyz,n=v.normal.xyz;
+    for(uint k=0;k<v.meta.z;++k){float w=previous?poses[v.meta.w+k].y:poses[v.meta.w+k].x;
+        p+=deltas[v.meta.y+k].position.xyz*w;n+=deltas[v.meta.y+k].normal.xyz*w;}
+    vec3 position;
+    if(settings.dualQuaternion!=0 && dualDeform(v,previous,p,n,position,normal))return position;
+    mat4 skin=mat4(0);for(int k=0;k<4;++k)skin+=palette(v.meta.x+v.joints[k],previous)*v.weights[k];
+    mat3 transform=mat3(skin);normal=abs(determinant(transform))>1e-8?transpose(inverse(transform))*n:transform*n;
+    normal=dot(normal,normal)>1e-12?normalize(normal):vec3(0,1,0);
+    return (skin*vec4(p,1)).xyz;
+}
+vec3 outputPosition(uint i){uint b=i*15;return vec3(outputData[b],outputData[b+1],outputData[b+2]);}
+void main(){
+    uint i=gl_GlobalInvocationID.x;if(i>=settings.count)return;
+    if(settings.surfacePass!=0){
+        vec3 sum=vec3(0);uvec4 adjacency=vertices[i].surface;
+        for(uint k=0;k<adjacency.y;++k){
+            uvec3 face=floatBitsToUint(deltas[adjacency.x+k].position.xyz);
+            vec3 a=outputPosition(face.x),b=outputPosition(face.y),c=outputPosition(face.z);
+            sum+=cross(b-a,c-a);
+        }
+        if(dot(sum,sum)>1e-16){sum=normalize(sum);for(uint k=0;k<3;++k)outputData[i*15+6+k]=sum[k];}
+        return;
+    }
+    vec3 normal,unused;vec3 p=deform(vertices[i],false,normal),q=deform(vertices[i],true,unused);
+    uint base=i*15;for(uint k=0;k<3;++k){outputData[base+k]=p[k];outputData[base+6+k]=normal[k];outputData[settings.previousOffset+i*4+k]=q[k];}
+    outputData[settings.previousOffset+i*4+3]=1;
+}

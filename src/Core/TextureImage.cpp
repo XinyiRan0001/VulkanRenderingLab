@@ -4,12 +4,14 @@
 #include <vector>
 #include <iostream>
 #include <stdexcept>
+#include <cmath>
+#include <algorithm>
 
 TextureImage::TextureImage(
     const PhysicalDevice& physicalDevice,
     const LogicalDevice& logicalDevice,
     const TextureData& textureData,
-    bool srgb
+    bool srgb, bool mipmapped
 )
     : m_PhysicalDevice(physicalDevice),
     m_LogicalDevice(logicalDevice)
@@ -23,17 +25,18 @@ TextureImage::TextureImage(
         );
     }
 
+    if(mipmapped)m_MipLevels=1+uint32_t(std::floor(std::log2(std::max(textureData.width,textureData.height))));
     CreateImage(
         static_cast<uint32_t>(textureData.width),
         static_cast<uint32_t>(textureData.height),
         m_Format,
         VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-        VK_IMAGE_USAGE_SAMPLED_BIT
+        VK_IMAGE_USAGE_SAMPLED_BIT,0,m_MipLevels
     );
 
     UploadPixels(textureData);
-    CreateImageView();
-    CreateSampler();
+    CreateImageView(VK_IMAGE_VIEW_TYPE_2D,m_MipLevels,1);
+    if(mipmapped)CreateSampler(VK_SAMPLER_ADDRESS_MODE_REPEAT,float(m_MipLevels-1));else CreateSampler();
 
     std::cout
         << "TextureImage uploaded successfully."
@@ -454,10 +457,24 @@ void TextureImage::UploadPixels(
     const TextureData& textureData
 )
 {
-    const VkDeviceSize imageSize =
-        static_cast<VkDeviceSize>(
-            textureData.pixels.size()
-            );
+    std::vector<uint8_t> pixels=textureData.pixels, previous=textureData.pixels;
+    uint32_t width=textureData.width,height=textureData.height;
+    const bool srgb=m_Format==VK_FORMAT_R8G8B8A8_SRGB;
+    const auto linear=[](float v){return v<=.04045f?v/12.92f:std::pow((v+.055f)/1.055f,2.4f);};
+    const auto encoded=[](float v){return v<=.0031308f?12.92f*v:1.055f*std::pow(v,1/2.4f)-.055f;};
+    for(uint32_t level=1;level<m_MipLevels;++level){
+        uint32_t w=std::max(1u,width/2),h=std::max(1u,height/2);std::vector<uint8_t> next(size_t(w)*h*4);
+        for(uint32_t y=0;y<h;++y)for(uint32_t x=0;x<w;++x)for(uint32_t c=0;c<4;++c){
+            float sum=0;uint32_t count=0;
+            for(uint32_t sy=y*height/h;sy<(y+1)*height/h;++sy)for(uint32_t sx=x*width/w;sx<(x+1)*width/w;++sx){
+                float value=previous[(size_t(sy)*width+sx)*4+c]/255.f;sum+=srgb&&c<3?linear(value):value;++count;
+            }
+            float value=sum/count;if(srgb&&c<3)value=encoded(value);
+            next[(size_t(y)*w+x)*4+c]=uint8_t(std::lround(std::clamp(value,0.f,1.f)*255));
+        }
+        pixels.insert(pixels.end(),next.begin(),next.end());previous=std::move(next);width=w;height=h;
+    }
+    const VkDeviceSize imageSize=pixels.size();
 
     Buffer stagingBuffer(
         m_PhysicalDevice,
@@ -469,7 +486,7 @@ void TextureImage::UploadPixels(
     );
 
     stagingBuffer.UploadData(
-        textureData.pixels.data(),
+        pixels.data(),
         imageSize
     );
 
@@ -1010,36 +1027,15 @@ void TextureImage::CopyBufferToImage(
     VkCommandBuffer commandBuffer =
         BeginSingleTimeCommands(commandPool);
 
-    VkBufferImageCopy region{};
-
-    region.bufferOffset = 0;
-    region.bufferRowLength = 0;
-    region.bufferImageHeight = 0;
-
-    region.imageSubresource.aspectMask =
-        VK_IMAGE_ASPECT_COLOR_BIT;
-
-    region.imageSubresource.mipLevel = 0;
-    region.imageSubresource.baseArrayLayer = 0;
-    region.imageSubresource.layerCount = 1;
-
-    region.imageOffset = { 0, 0, 0 };
-
-    region.imageExtent =
-    {
-        width,
-        height,
-        1
-    };
-
-    vkCmdCopyBufferToImage(
-        commandBuffer,
-        buffer,
-        m_Image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &region
-    );
+    std::vector<VkBufferImageCopy> regions;
+    VkDeviceSize offset=0;
+    for(uint32_t level=0;level<m_MipLevels;++level){
+        VkBufferImageCopy region{};region.bufferOffset=offset;
+        region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,level,0,1};
+        region.imageExtent={std::max(1u,width>>level),std::max(1u,height>>level),1};regions.push_back(region);
+        offset+=VkDeviceSize(region.imageExtent.width)*region.imageExtent.height*4;
+    }
+    vkCmdCopyBufferToImage(commandBuffer,buffer,m_Image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(regions.size()),regions.data());
 
     EndSingleTimeCommands(
         commandBuffer,

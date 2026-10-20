@@ -8,6 +8,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <array>
+#include <numeric>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -33,7 +34,7 @@ CommandManager::CommandManager(
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
     const std::vector<MaterialData>& materials,
-    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth
+    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth, GpuSkinning* skinning, AnimationPanel* animationPanel, RayQueryReflections* reflections
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -52,10 +53,11 @@ CommandManager::CommandManager(
     m_HiZ(hiZ),
     m_Debug(debug),
     m_Inspector(inspector),
-    m_Prepass(prepass),m_MainDepth(mainDepth),
+    m_Prepass(prepass),m_MainDepth(mainDepth),m_Skinning(skinning),m_AnimationPanel(animationPanel),m_Reflections(reflections),
     m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
+    m_DrawOrder.resize(subMeshes.size());std::iota(m_DrawOrder.begin(),m_DrawOrder.end(),0u);
     CreateCommandPool();
     CreateTimestampQueryPool();
 
@@ -163,7 +165,7 @@ void CommandManager::CreateTimestampQueryPool()
     queryPoolInfo.queryType =
         VK_QUERY_TYPE_TIMESTAMP;
 
-    queryPoolInfo.queryCount = 14;
+    queryPoolInfo.queryCount = 22;
 
     VkResult result = vkCreateQueryPool(
         m_LogicalDevice.GetHandle(),
@@ -247,8 +249,14 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             m_TimestampQueryPool,
             0,
-            14
+            22
         );
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,18);
+        if(m_Skinning)m_Skinning->Record(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,19);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,20);
+        if(m_Reflections)m_Reflections->RecordUpdates(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,21);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,8);
         if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,9);
@@ -258,6 +266,12 @@ void CommandManager::RecordCommandBuffers()
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,12);
         if(m_Prepass && m_RawAoEnabled && !m_BenchmarkMode) m_Prepass->RecordBlur(m_CommandBuffers[i]);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,13);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,14);
+        if(m_Prepass && m_RawAoEnabled && !m_BenchmarkMode) m_Prepass->RecordResolve(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,15);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,16);
+        if(m_Prepass && m_RawAoEnabled && !m_BenchmarkMode) m_Prepass->RecordTemporal(m_CommandBuffers[i]);
+        vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,17);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,6);
         if (m_HiZ && m_RunHiZ) m_HiZ->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,7);
@@ -365,6 +379,7 @@ void CommandManager::RecordCommandBuffers()
 
         for (const SubMesh& subMesh : m_SubMeshes)
         {
+            if(subMesh.transparent)continue;
             vkCmdDrawIndexed(
                 m_CommandBuffers[i],
                 subMesh.indexCount,
@@ -536,9 +551,14 @@ void CommandManager::RecordCommandBuffers()
             VK_INDEX_TYPE_UINT32
         );
 
+        VkPipeline boundPipeline=m_GraphicsPipeline.GetPipeline();
+        if(m_Reflections){auto set=m_Reflections->Set();vkCmdBindDescriptorSets(m_CommandBuffers[i],VK_PIPELINE_BIND_POINT_GRAPHICS,m_GraphicsPipeline.GetLayout(),1,1,&set,0,nullptr);}
         uint32_t indirectIndex = 0;
-        for (const SubMesh& subMesh : m_SubMeshes)
+        for (uint32_t drawIndex : m_DrawOrder)
         {
+            const SubMesh& subMesh=m_SubMeshes[drawIndex];
+            auto pipeline=m_GraphicsPipeline.GetPipeline(subMesh.doubleSided,subMesh.transparent);
+            if(pipeline!=boundPipeline){vkCmdBindPipeline(m_CommandBuffers[i],VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);boundPipeline=pipeline;}
             VkDescriptorSet materialSet = m_DescriptorManager.GetDescriptorSet(subMesh.materialId);
             vkCmdBindDescriptorSets(m_CommandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
                 m_GraphicsPipeline.GetLayout(), 0, 1, &materialSet, 0, nullptr);
@@ -556,6 +576,8 @@ void CommandManager::RecordCommandBuffers()
                 materialPushConstants.flags.y = 0;
                 for (int slot = 1; slot < 5; ++slot)
                     if (material.textures[slot] >= 0) materialPushConstants.flags.y |= (1 << (slot-1));
+                if(material.doubleSided)materialPushConstants.flags.y|=16;
+                if(material.blend)materialPushConstants.flags.y|=32;
                 materialPushConstants.emissive = glm::vec4(material.emissive, 0.0f);
                 materialPushConstants.textureSettings = glm::vec4(material.normalScale, material.occlusionStrength, 0, 0);
                 materialPushConstants.baseColor =
@@ -563,7 +585,7 @@ void CommandManager::RecordCommandBuffers()
                         material.diffuseColor[0],
                         material.diffuseColor[1],
                         material.diffuseColor[2],
-                        1.0f
+                        material.alpha
                     );
 
                 materialPushConstants.properties =
@@ -571,7 +593,7 @@ void CommandManager::RecordCommandBuffers()
                         material.metallic,
                         material.roughness,
                         material.ambientOcclusion,
-                        0.0f
+                        material.rayMirror?1.0f:0.0f
                     );
             }
             else
@@ -624,6 +646,7 @@ void CommandManager::RecordCommandBuffers()
         if (m_Debug && !m_BenchmarkMode) m_Debug->Record(m_CommandBuffers[i]);
         if (m_Inspector && m_InspectorEnabled && !m_BenchmarkMode) m_Inspector->RecordPanel(m_CommandBuffers[i]);
         if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->RecordPreview(m_CommandBuffers[i]);
+        if(m_AnimationPanel && !m_BenchmarkMode)m_AnimationPanel->Record(m_CommandBuffers[i]);
         vkCmdEndRenderPass(
             m_CommandBuffers[i]
         );
@@ -660,7 +683,7 @@ bool CommandManager::GetGpuTimingResult(
     GpuTimingResult& result
 ) const
 {
-    std::array<uint64_t, 14> timestamps{};
+    std::array<uint64_t, 22> timestamps{};
 
     VkResult queryResult = vkGetQueryPoolResults(
         m_LogicalDevice.GetHandle(),
@@ -700,12 +723,16 @@ bool CommandManager::GetGpuTimingResult(
 
     const double totalNanoseconds =
         static_cast<double>(
-            timestamps[3] - timestamps[8]
+            timestamps[3] - timestamps[18]
             ) * nanosecondsPerTick;
 
     constexpr double nanosecondsToMilliseconds =
         1.0 / 1000000.0;
 
+    result.skinningMs = m_Skinning ? double(timestamps[19]-timestamps[18])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
+    result.accelerationUpdateMs = m_Reflections && m_Reflections->Dynamic() ? double(timestamps[21]-timestamps[20])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
+    result.temporalMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[17]-timestamps[16])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
+    result.resolveMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[15]-timestamps[14])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
     result.blurMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[13]-timestamps[12])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
     result.ssaoMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[11]-timestamps[10])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
     result.prepassMs = m_PrepassEnabled && !m_BenchmarkMode ? double(timestamps[9]-timestamps[8])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
@@ -794,3 +821,5 @@ void CommandManager::SetPrepassEnabled(bool enabled,bool rawAo,int debugMode) {
     if(vkDeviceWaitIdle(m_LogicalDevice.GetHandle())!=VK_SUCCESS) throw std::runtime_error("Cannot wait for prepass toggle");
     m_PrepassEnabled=enabled;m_RawAoEnabled=rawAo;m_PrepassMode=debugMode;RecordCommandBuffers();
 }
+
+void CommandManager::SetDrawOrder(const std::vector<uint32_t>& order){if(m_DrawOrder==order)return;if(order.size()!=m_SubMeshes.size())throw std::runtime_error("Invalid draw order");m_DrawOrder=order;RecordCommandBuffers();}

@@ -1,4 +1,3 @@
-#define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 #include <stb_image.h>
 #include "GLTFLoader.h"
@@ -10,6 +9,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <climits>
+#include <unordered_map>
 
 namespace {
 void Require(bool ok, const char* message) {
@@ -20,7 +20,7 @@ glm::vec3 SafeNormal(glm::vec3 v, glm::vec3 fallback) {
 }
 }
 
-MeshData GLTFLoader::Load(const std::string& path) {
+MeshData GLTFLoader::Load(const std::string& path, bool animationMaterialsOnly) {
     cgltf_options options{};
     cgltf_data* raw = nullptr;
     Require(cgltf_parse_file(&options, path.c_str(), &raw) == cgltf_result_success, "cannot parse file");
@@ -28,8 +28,9 @@ MeshData GLTFLoader::Load(const std::string& path) {
     Require(cgltf_load_buffers(&options, raw, path.c_str()) == cgltf_result_success, "cannot load buffers");
     Require(cgltf_validate(raw) == cgltf_result_success, "invalid document");
     Require(raw->extensions_required_count == 0, "required extensions are not supported");
-    Require(raw->animations_count == 0, "animations are not supported");
+    Require(animationMaterialsOnly || raw->animations_count == 0, "animations are not supported");
     MeshData result;
+    std::unordered_map<const cgltf_image*,int> imageCache;
     auto image = [&](const cgltf_texture_view& view) -> int {
         if (!view.texture) return -1;
         Require(view.texcoord == 0 && !view.has_transform, "only untransformed TEXCOORD_0 is supported");
@@ -40,8 +41,9 @@ MeshData GLTFLoader::Load(const std::string& path) {
             const auto& s = *view.texture->sampler;
             Require(s.wrap_s == 10497 && s.wrap_t == 10497 &&
                 (s.mag_filter == 0 || s.mag_filter == 9729) &&
-                (s.min_filter == 0 || s.min_filter == 9729), "custom/mipmapped samplers are not supported yet");
+                (s.min_filter == 0 || s.min_filter == 9729 || (animationMaterialsOnly && s.min_filter == 9987)), "custom/mipmapped samplers are not supported yet");
         }
+        if(auto found=imageCache.find(source);found!=imageCache.end())return found->second;
         TextureData pixels;
         if (source->uri && std::strncmp(source->uri, "data:", 5) != 0) {
             std::string uri = source->uri;
@@ -59,13 +61,16 @@ MeshData GLTFLoader::Load(const std::string& path) {
             pixels.pixels.assign(decoded, decoded + size_t(pixels.width) * pixels.height * 4);
         }
         result.images.push_back(std::move(pixels));
+        imageCache[source]=int(result.images.size()-1);
         return static_cast<int>(result.images.size() - 1);
     };
     for (size_t i = 0; i < raw->materials_count; ++i) {
         const auto& source = raw->materials[i];
-        Require(source.alpha_mode == cgltf_alpha_mode_opaque && !source.double_sided && !source.unlit, "only opaque, single-sided metallic-roughness materials are supported");
+        Require(!source.unlit && (animationMaterialsOnly ? source.alpha_mode!=cgltf_alpha_mode_mask : source.alpha_mode == cgltf_alpha_mode_opaque && !source.double_sided), "only opaque, single-sided metallic-roughness materials are supported");
         MaterialData m;
         const auto& pbr = source.pbr_metallic_roughness;
+        m.alpha=pbr.base_color_factor[3];m.blend=source.alpha_mode==cgltf_alpha_mode_blend;m.doubleSided=source.double_sided;
+        m.mipmapped=pbr.base_color_texture.texture && pbr.base_color_texture.texture->sampler && pbr.base_color_texture.texture->sampler->min_filter==9987;
         std::copy(pbr.base_color_factor, pbr.base_color_factor + 3, m.diffuseColor);
         m.metallic = pbr.metallic_factor;
         m.roughness = pbr.roughness_factor;
@@ -81,6 +86,7 @@ MeshData GLTFLoader::Load(const std::string& path) {
     fallback.roughness = 1.0f;
     const int defaultMaterial = static_cast<int>(result.materials.size());
     result.materials.push_back(fallback);
+    if(animationMaterialsOnly)return result;
     std::function<void(const cgltf_node*)> visit = [&](const cgltf_node* node) {
         Require(!node->skin, "skinning is not supported");
         glm::mat4 world;

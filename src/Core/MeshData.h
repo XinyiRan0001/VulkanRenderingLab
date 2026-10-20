@@ -25,6 +25,7 @@ struct SubMesh
     bool occluder = false;
     glm::vec4 localSphere{0.0f}; // prototype bounds, before instance/global transforms
     std::string instanceGroupName; // optional debug label; grouping uses the instance range
+    bool transparent=false, doubleSided=false;
 };
 
 // =========================================================
@@ -43,6 +44,9 @@ struct MaterialData
         1.0f
     };
 
+    float alpha=1.f;
+    bool blend=false, doubleSided=false, mipmapped=false;
+    bool rayMirror=false;
     float metallic = 0.0f;
     float roughness = 0.5f;
     float ambientOcclusion = 1.0f;

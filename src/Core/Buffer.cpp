@@ -47,6 +47,9 @@ void Buffer::CreateBuffer(VkDeviceSize size,
     vkGetBufferMemoryRequirements(device, m_Buffer, &memRequirements);
 
     VkMemoryAllocateInfo allocInfo{};
+    VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+    flags.flags=VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    if(usage&VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)allocInfo.pNext=&flags;
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = FindMemoryType(
@@ -60,6 +63,11 @@ void Buffer::CreateBuffer(VkDeviceSize size,
     }
 
     vkBindBufferMemory(device, m_Buffer, m_Memory, 0);
+}
+
+VkDeviceAddress Buffer::Address() const {
+    VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};info.buffer=m_Buffer;
+    return vkGetBufferDeviceAddress(m_LogicalDevice.GetHandle(),&info);
 }
 
 uint32_t Buffer::FindMemoryType(uint32_t typeFilter,

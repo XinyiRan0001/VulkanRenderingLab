@@ -1,0 +1,85 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "VulkanRenderingLab SSAO fixture"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1
+          },
+          "indices": 2
+        }
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,so9wwEQdr78AAIDAso9wwEQdr78AAIBAso9wQEQdrz8AAIBAso9wQEQdrz8AAIDAAAAAAAAAAAAAAIDARB0vv7KP8D8AAIDARB0vv7KP8D8AAIBAAAAAAAAAAAAAAIBARB2vvrKPcD8AAAAARB2vvrKPcD8AAAAARB2vvrKPcD8AAAAARB2vvrKPcD8AAAAAso9wP0Qdrz4AAAAAso9wP0Qdrz4AAAAAso9wP0Qdrz4AAAAAso9wP0Qdrz4AAAAAAAAAAAEAAAACAAAAAAAAAAIAAAADAAAABAAAAAUAAAAGAAAABAAAAAYAAAAHAAAA",
+      "byteLength": 240
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 96
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 192,
+      "byteLength": 48
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        -3.7587704831436337,
+        -1.3680805733026749,
+        -4
+      ],
+      "max": [
+        3.7587704831436337,
+        1.8793852415718169,
+        4
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5125,
+      "count": 12,
+      "type": "SCALAR"
+    }
+  ]
+}

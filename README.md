@@ -1060,8 +1060,13 @@ A recommended order for demonstrating the renderer:
 | Shadows | `2` | PCF |
 | Shadows | `3` | PCSS |
 | Shadows | `4` | Shadow Map Debug |
+| SSAO | `F1` | Switch full / half AO resolution (rebuilds renderer resources) |
+| SSAO | `F2` | Toggle plane-aware / camera-depth blur guidance |
+| SSAO | `G` | Cycle filtered AO / history status / history weight views |
+| SSAO | `J` | Toggle fixed / deterministic per-frame AO samples |
+| SSAO | `T` | Toggle temporal accumulation; title shows ON/OFF |
 | SSAO | `F3` | Toggle indirect-diffuse AO composition / off |
-| SSAO | `F4` | Cycle normal, depth, raw AO, blurred AO and composite views |
+| SSAO | `F4` | Cycle normal, depth, raw AO, blurred AO, composite and motion views |
 | HDR | `H` | Toggle Skybox |
 | HDR | `F5` | Exposure - |
 | HDR | `F6` | Exposure + |
@@ -1115,7 +1120,7 @@ cmake --build build --config Release
 ```
 
 **F4** cycles Off → View Normal → Linear Depth → World Normal → Raw SSAO →
-Blurred SSAO → SSAO Composite → Off. **F3** toggles Composite / Off.
+Blurred SSAO → SSAO Composite → Motion → Off. **F3** toggles Composite / Off.
 `--prepass` keeps shaded rendering while executing the prepass. Geometric
 normals are stored in view space (normal maps are not applied), using the inverse
 transpose for object transforms. RGBA16F stores unit normal XYZ and positive
@@ -1213,11 +1218,11 @@ The raw AO and corner screenshots below use the default 32 samples.
 .\build\Release\VulkanRenderingLab.exe --ssao --lighting-view 2
 ```
 
-The full-resolution 5×5 compute filter combines spatial Gaussian weights,
-linear view-depth differences and normal similarity. It rejects background and
+The 5×5 AO-grid compute filter combines spatial Gaussian weights,
+surface separation and normal similarity. It rejects background and
 out-of-bounds pixels and normalizes accepted weights. The center always has
 unit weight, so constants remain constant and there is no zero denominator.
-Depth sigma is `max(0.002, aoRadius * 0.1)` in scene/view units, spatial sigma is
+The separation sigma is `max(0.002, aoRadius * 0.1)` in scene/view units, spatial sigma is
 1.5 pixels, and the normal weight is `max(dot(N0,N1),0)^32`. These fixed defaults
 are a first quality baseline rather than a temporal denoiser.
 
@@ -1239,7 +1244,7 @@ change because their diffuse contribution is small or zero.
 ![Filtered AO applied to indirect diffuse](docs/images/ssao-on.png)
 ![Bilateral-filtered AO visibility](docs/images/ssao-blurred.png)
 
-Validation on 2026-10-19: GPU raw/blurred values are finite in [0,1] with white
+Baseline validation on 2026-10-19 (camera-depth filter, before plane guidance): GPU raw/blurred values are finite in [0,1] with white
 background. GPU bilateral results at 560 covered grid samples agreed with a CPU
 reference over the actual readback inputs (observed maximum error about 2.4e-7
 in the default 1280×720 scene). Smooth-surface horizontal neighbor differences
@@ -1260,6 +1265,696 @@ For a bounded mode/descriptor regression run:
 This debug option cycles Off → Composite → Off → Raw → Blurred → Composite →
 Off → Composite. With `--capture build/ao-cycle`, it saves one numbered image per
 frame. `--verify-prepass` additionally compares sampled GPU blur values against
-the CPU reference. Current limitations include fixed 5×5 support, no temporal
-accumulation, missing offscreen/hidden geometry and a full renderer rebuild on
+the CPU reference. Current limitations include fixed 5×5 spatial support,
+missing offscreen/hidden geometry and a full renderer rebuild on
 resize. Inspect silhouette and thin geometry artifacts per scene.
+
+
+### Plane-aware AO filtering
+
+The default filter now reconstructs both neighboring view positions and measures
+symmetric tangent-plane separation:
+
+`max(abs(dot(Np, Q-P)), abs(dot(Nq, Q-P)))`.
+
+This replaces camera-Z difference in the separation Gaussian. Coplanar neighbors
+retain weight on steeply sloped surfaces, while separate depth layers can still
+be rejected. The plane mode also skips neighbors more than `aoRadius` away in
+3D. Both methods retain spatial and normal weights, normalization, background
+rejection and the same raw AO input. No extra GPU image or pass is added.
+
+**F2** switches plane/depth guidance without changing the camera. The title shows
+which is active, and the setting survives resize. The baseline remains available:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-blur plane
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-blur depth
+# Grazing-angle receiver; press F2 to compare the two filters:
+.\build\Release\VulkanRenderingLab.exe --scene assets/models/ssao-validation/tilted-corner.gltf --ssao-blurred --paused --yaw 20 --pitch 9 --ao-radius 0.2 --ao-bias 0.01 --ao-samples 16
+```
+
+`AoBlurMathTests` checks coplanar slopes, distinct parallel layers, symmetry,
+rigid-camera invariance and zero separation at the center. The GPU/CPU readback
+reference checks the selected guidance method. Smooth-surface diagnostics now
+select pairs using plane separation and 3D distance, independent of which filter
+is selected; their values should not be compared directly with the earlier
+camera-depth-selected diagnostic above. Logs retain scientific-notation precision.
+
+In the fixed 1280×720 grazing fixture above, both methods read identical raw AO
+and selected 704,414 neighbor pairs. Mean horizontal differences were 0.00013787
+with camera-Z guidance and 0.00012602 with plane guidance (about 8.6% lower).
+This is a scene-specific smoothness diagnostic, not proof of universal quality or
+performance improvement. The ordinary tilted view showed only a small difference.
+Full-position reconstruction and extra geometry tests cost additional arithmetic;
+no formal GPU performance claim is made. Fixed 5×5 spatial support remains a limitation; temporal accumulation is optional
+(see below), and world-distance capping can itself limit
+smoothing at extreme grazing angles.
+
+`verify-ssao.ps1` now also checks both guidance modes on `tilted-corner.gltf` and
+`thin-layers.gltf`. The latter places narrow foreground strips 1.7 units in front
+of a parallel background, exercising equal-normal depth discontinuities. These
+cases require valid covered GPU blur samples and CPU reference agreement; they
+do not assert that plane guidance improves every scene.
+
+
+### Half-resolution SSAO with geometry-guided upsampling
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-resolution half
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-resolution full
+.\tools\verify-ssao-resolution.ps1
+```
+
+Full resolution remains the default. **F1** switches full/half and retains the
+camera, AO parameters and debug mode. This version uses the existing full-context
+rebuild path, so changing resolution briefly pauses rendering and also rebuilds
+IBL. The title identifies FULL/HALF. F2/F3/F4 retain their earlier functions.
+
+The normal/depth prepass and the main render target stay at full resolution.
+Only raw AO, bilateral filtering and their representative map use the selected
+AO extent: 1280×720 becomes 640×360; 961×541 becomes **481×271**, rounding up.
+Each half-resolution cell selects the closest device-depth surface from its
+clipped 2×2 full-resolution block and records that full pixel's index in R32_UINT.
+Raw AO uses the chosen full position/normal, the actual full-resolution projection
+and full-resolution occluder depth. Radius/bias stay in view/scene units. The
+rotation tile uses the chosen full pixel, retaining matching sample directions.
+The blur reconstructs geometry through the same representative map. Its 5×5
+footprint is in AO texels, covering roughly twice as many full pixels in half mode.
+
+A separate full-resolution R32F resolve pass examines four surrounding low-grid
+cells. It combines bilinear, surface-plane separation and normal weights, using
+the actual representative geometry. Background, incompatible normals, distant
+layers and excessively separated points are rejected **before normalization**.
+When no suitable representative remains, visibility is 1 (unoccluded). This avoids
+normalizing a weak unrelated sample into a strong contour halo, but can lose AO
+on thin geometry or surfaces absent from the representative set. Half mode does
+not promise pixel-identical quality or temporal stability. Full mode uses an
+identity resolve/copy, preserving one full-resolution forward sampling interface.
+
+Raw, blurred, representative and resolved images have explicit compute-write →
+compute/fragment/transfer-read dependencies and reuse the existing single-frame
+fence. The final shader still reads AO at its full-resolution fragment coordinate
+and applies it only to indirect diffuse. Raw preview in half mode shows nearest
+low cells; blurred preview shows the geometry-guided resolved result.
+
+`--verify-prepass` checks every representative index against a CPU closest-surface
+selection (including partial NPOT cells), raw/blurred/resolved ranges and white
+background. Sparse CPU references verify both the low-grid filter and the full-grid
+resolve; full-mode identity resolve is checked as well. A 641×361 full → half → full
+cycle restored pixel-identical full captures; half mode also passed an animated
+camera/resize check ending at 961×541 with a 481×271 AO image. Plane, corner and
+thin-layer cases pass both resolutions under Vulkan/synchronization validation.
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-resolution-cycle-test --verify-prepass --paused --frames 6
+```
+
+This bounded diagnostic renders two full, two half and two full frames (reversed
+when started with `--ao-resolution half`). It validates the same rebuild path as
+F1. With `--capture build/ao-cycle.png`, rebuilt states also save `.half.png` and
+`.full.png` files. Geometry tests additionally cover ceil-half dimensions and
+full-pixel-center to low-grid coordinate mapping.
+
+For a lightweight timing comparison, use Release with validation and readback
+disabled, a fixed window/camera and identical parameters:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-resolution full --ao-timing build/ao-full.csv
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-resolution half --ao-timing build/ao-half.csv
+python tools/summarize-ao-timings.py build/ao-full.csv build/ao-half.csv
+```
+
+Timing capture pauses animation and locks controls, discards 60 warmup frames,
+then records 240 completed GPU samples by default. `--ao-warmup` and `--ao-measure`
+change those counts. The default frame limit includes the extra submission needed
+to collect the last requested sample. Window changes or incomplete captures fail
+rather than reporting a complete result. Verification, captures, diagnostic views
+and camera sweeps cannot be combined with this timing mode. Validation layers
+inherited through environment must also be disabled for a performance run.
+
+CSV metadata records device/driver, resolution, scale, AO and camera settings;
+an `.args.txt` sidecar records the invocation. CSV has separate Prepass, SSAO,
+Blur, Resolve, Temporal (including history copies), Main and independently measured Total intervals. The summarizer
+checks sample counts/sequence/finite values and reports mean/nearest-rank P95.
+Run repeated, alternating full/half trials and record the source SHA/dirty state
+before publishing results. Full resolve is a copy and half resolve is guided
+upsampling; the full baseline is this current pipeline, including its identity
+representative map and resolve overhead. Results are not a comparison against
+the earlier pre-resolve implementation. Quarter AO pixels do not imply quarter
+memory usage or four times the frame rate: full geometry buffers, resolved AO,
+shadows and forward rendering remain. Local captures/CSV stay in ignored `build/`.
+
+
+### Motion vectors (temporal AO foundation)
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --motion-view
+.\build\Release\VulkanRenderingLab.exe --motion-view --verify-motion --paused --frames 4 --camera-sweep 3
+.\tools\verify-motion.ps1
+```
+
+This view isolates the motion input used by optional temporal AO below.
+Drag the camera slowly in the motion view:
+stationary geometry is neutral gray, horizontal/vertical offsets affect red/green,
+background is black, and missing/out-of-bounds previous projections are magenta.
+The display saturates at ±8 pixels per axis; stored vectors are unclamped UV
+values. F4 includes Motion after Composite, before Off.
+
+The full-resolution prepass has a second RGBA32F color attachment. XY stores
+`previousUV - currentUV`, Z stores previous device depth, and signed W encodes
+`instanceId + 1` (positive = projection candidate, negative = invalid/reset,
+zero = background). A positive value is **not** evidence that the surface was
+visible in the previous frame: previous-depth/normal rejection belongs to the
+next stage. The direction is a history lookup offset; an object moving right
+with a stationary camera points left into the previous frame.
+
+Previous camera/global matrices and original-index instance transforms advance
+only after successful GPU submission. They are uploaded after the single-frame
+fence, independent of compacted visibility ordering. The vertex shader projects
+previous object positions and passes previous clip coordinates for perspective
+interpolation; the fragment shader divides by previous W and subtracts its actual
+pixel-center UV. This supports CPU-updated rigid instances, not skeletal or vertex
+deformation. Geometry/topology and instance indexing must remain stable between
+frames; new contexts naturally reset their previous state.
+
+First frame, prepass re-enable, camera reset (`R`), window resize and F1 resource
+rebuild invalidate the record. Ordinary orbit, zoom, F2 changes and consecutive
+prepass debug views preserve it. No previous GPU handle or temporal record crosses
+the full renderer rebuild. Motion output currently runs whenever prepass runs,
+including AO modes; it adds attachment bandwidth, vertex work and CPU instance
+snapshots. Earlier AO timing observations were collected before this attachment
+and are not a performance budget for this revision. New timing metadata includes
+`motionOutput=1`.
+
+`--verify-motion` enables the same diagnostic readback as `--verify-prepass` and
+selects Motion when no other prepass mode is requested. Every covered GPU motion
+pixel is checked against CPU reconstruction through the current object inverse,
+previous object/global transform and previous camera. It also checks finite data,
+instance IDs, zero background and reset semantics. Candidate UV error tolerance is
+0.05 pixels; projected validity checks allow a small boundary tolerance. Invalid
+projections are not usable history, so their often ill-conditioned UV values are
+not treated as accurate sampling coordinates. RGBA32F readback offsets are aligned
+to the 16-byte texel size, including odd dimensions.
+
+Validation on 2026-10-19: static 1280×720 geometry had maximum residual about
+0.0022 pixels. Camera-motion candidate error stayed below 0.005 pixels in the
+checked default runs; instance-motion, explicit reset and half-resource/NPOT resize
+checks passed. The five motion GPU scenarios, fourteen AO regression scenarios,
+mixed-instance and nonuniform/mirrored glTF camera tests passed without observed
+Vulkan/synchronization errors. Eight CTest tests passed, including UV direction,
+Vulkan depth convention, reset, clipping and camera/object translation cases.
+
+![Camera-motion vectors](docs/images/motion-camera.png)
+![Instance-zero motion; material-ball instances remain near zero](docs/images/motion-instance.png)
+
+For the instance diagnostic, instance zero translates each frame. In the legacy
+scene the character **and floor** share that instance; material-ball instances
+remain fixed. This is a bounded verification stimulus, not a general scene editor:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --motion-view --verify-motion --paused --frames 4 --motion-instance-test
+# Capture frame 3 (1-based) after the previous-frame record exists:
+.\build\Release\VulkanRenderingLab.exe --motion-view --paused --frames 4 --camera-sweep 3 --capture build/motion.png --capture-frame 3
+```
+
+`--motion-reset-at 2` resets before zero-based loop frame 2 in a bounded run;
+this is a lifecycle diagnostic. First-frame captures intentionally show reset
+magenta, rather than a fabricated usable motion field. Logs/captures and local
+course walkthroughs remain excluded from commits.
+
+
+### Temporal SSAO: motion reprojection and history rejection
+
+```powershell
+# Most useful comparison: watch contact shading while slowly orbiting; T toggles history.
+.\build\Release\VulkanRenderingLab.exe --ssao-blurred --ao-temporal on --ao-samples 8 --paused
+# Final PBR image; AO still modulates indirect diffuse only:
+.\build\Release\VulkanRenderingLab.exe --ssao --ao-temporal on
+.\tools\verify-ssao-temporal.ps1
+```
+
+Accumulation is **opt-in**, default off. T changes it at runtime without rebuilding
+resources. F4's filtered AO view shows the spatial result when off and the temporal
+result when on; raw AO remains unchanged. Spatial blur (F2) and resolution (F1)
+remain independent choices. With default fixed sampling, a static AO frame may look nearly
+identical: this feature targets frame-to-frame sampling changes during motion,
+not stronger contact darkening or additional geometry detail.
+
+A separate full-resolution compute pass follows guided resolve in full/half modes:
+
+1. Compute previous UV as current UV + motion.xy. Positive motion.w is only a
+   projection candidate, not a visibility guarantee.
+2. Fetch four previous-frame taps. Each must match instance ID, world normal
+   (dot >= 0.9), and expected previous **linear view distance** reconstructed from
+   motion.z with the previous inverse projection. Depth tolerance is
+   max(0.01 world units, 0.5% of expected distance). Background/out-of-bounds taps
+   are excluded. World normals prevent camera rotation from creating false mismatches;
+   object rotation can conservatively reject otherwise valid history.
+3. Clamp normalized history AO to the current 3×3 AO min/max. Blend weight is
+   `0.85 * validBilinearWeight * exp(-motionPixels / 32)`. Missing taps and faster
+   motion reduce trust. No matching tap means current AO, never arbitrary history.
+4. After all invocations finish reading history, copy next AO/metadata and
+   geometry into fixed history images. Explicit compute/transfer/fragment barriers
+   protect the sequence; fixed descriptor sets remain valid for recorded commands.
+
+Motion-transform validity and AO-history validity are separate. AO history resets
+on first use, T changes, camera R, AO radius/bias/sample/guidance changes, debug-mode
+changes, disabled/non-AO frames, window resize and full/half rebuild. CPU state
+advances only after successful submission; failed acquire does not invent a frame.
+Rebuild restores settings, never old GPU image handles or valid-history state.
+
+`verify-ssao-temporal.ps1` enables Vulkan and synchronization validation and runs
+stationary, camera, thin-half, rigid-instance, reset, toggle, missing-AO-frame,
+resize, scale-cycle and disabled cases at NPOT resolutions. Diagnostic readback
+compares every temporal output pixel against a CPU reprojection/rejection/clamp
+reference (absolute tolerance 0.003), checks finite [0,1], current-only resets,
+geometry history, output/history consistency and neighborhood bounds. Moving cases
+must actually change AO; these checks establish correctness, not universal image
+quality or a performance improvement. Readback is disabled during ordinary runs.
+
+This first implementation favors inspectable RGBA32F metadata and explicit copies:
+extra temporal images cost **68 bytes per full-resolution pixel** (~59.8 MiB at
+1280×720), even with half-resolution AO and when T is off. Off still dispatches a
+current-only result and maintains images, so it is not the old pre-temporal GPU
+baseline. The Temporal timing interval includes its copies and, in verification
+runs, diagnostic readback; never use validation/readback timings as performance
+results. Timing metadata records `temporal=0|1`. Historic CSV files without the
+Temporal column show blank temporal statistics in the summarizer.
+
+Limitations: heuristic depth/normal thresholds, no variance/history-age confidence,
+no independent random sampling beyond a deterministic 64-phase sequence, no skeletal motion, no offscreen occlusion and
+no general solution for a moving occluder over a static receiver. Neighborhood
+clamping reduces trails but cannot guarantee their absence; thin surfaces may
+reject most history. This improves temporal filtering capability without claiming
+TAA, increased geometric accuracy or a measured FPS gain.
+
+
+### Reproducible per-frame AO sampling and temporal comparison
+
+```powershell
+# Temporal filtering is easier to observe with independently changing input samples.
+.\build\Release\VulkanRenderingLab.exe --scene assets/models/ssao-validation/corner.gltf --ssao-blurred --ao-sampling varying --ao-temporal on --ao-samples 4 --paused --yaw 45 --pitch 25 --camera-distance 3.5
+.\tools\capture-ssao-sequence.ps1
+python tools/analyze-ssao-sequence.py build/ao-sequence
+.\tools\verify-ssao-sampling.ps1
+.\tools\verify-ssao-temporal.ps1 -Varying
+```
+
+**J** changes `fixed|varying` sampling; **T** independently changes accumulation.
+Both default to fixed/off. Keep varying sampling active while comparing T ON/OFF;
+otherwise the original static sampling offers little temporal noise to remove.
+Use filtered AO (F4 or `--ssao-blurred`), since the raw AO view intentionally ignores T.
+
+The varying path rotates the hemisphere by a golden-ratio phase and selects
+`kernel[(i + phase * 17) % 64]`. Since 17 and 64 are coprime, every kernel element
+is visited by each sample slot over the 64-frame period. The phase advances only
+after an AO frame is successfully submitted, including when T is off. T does not
+change the sequence; J, R and resource rebuild reset it. This changes AO directions
+and radial samples, **not** the camera projection or rasterization (it is not TAA).
+Switching sampling mode resets AO history. Resize/F1 restores the chosen mode.
+
+The capture script records two independent 48-frame runs with identical sample
+phases and camera poses: hold through frame 24, orbit during frames 25–36, then
+hold. `--capture-every-frame` requires bounded frames and a capture prefix;
+`--camera-sweep-start-at` / `--camera-sweep-stop-at` use zero-based loop frames.
+Captures and analysis stay in ignored `build/`; Python analysis optionally requires
+numpy, Pillow and matplotlib. The runtime renderer adds no Python dependency.
+
+Local development snapshot, 2026-10-20 (uncommitted work based on d3f7d27):
+corner fixture, 641×361, full-resolution AO, plane blur, radius 0.5, bias 0.025,
+4 samples, yaw 45°, pitch 25°, distance 3.5. Static frames 8–23 use the same
+14,198-pixel mask (off-sequence mean display brightness < 0.995). Mean per-pixel
+standard deviation was **0.00941945 off / 0.00601151 on**, about **36.2% lower**;
+mean brightness shift was +0.0000455. These are 8-bit captured **display-brightness**
+statistics, not linear AO error, GPU timing or an image-quality guarantee.
+Motion frames are excluded from this variance calculation. First/reset images
+are checked identical before analysis. The GIF uses one common 128×128 ROI
+selected from the off sequence's fluctuation, enlarged 2× without contrast changes.
+The heatmaps share a scale. Less fluctuation alone cannot establish unbiased
+occlusion, absence of ghosting, or improvements on other scenes.
+
+![Same AO sampling and camera trajectory: temporal off / on](docs/images/ssao-temporal-comparison.gif)
+![Static AO fluctuation using a common mask and heatmap scale](docs/images/ssao-temporal-stability.png)
+
+The sampling validation checks byte-identical fixed stationary captures, phase-zero
+compatibility, a changing raw AO stimulus, and exact phase-0/phase-64 repetition.
+All ten temporal GPU/CPU reference and synchronization scenarios also pass with
+varying sampling. Thin layers, silhouette rejection and moving-occluder cases
+remain relevant; the current 3×3 clamp and depth/normal thresholds are heuristic.
+
+
+### Moving occluder, disocclusion diagnostics and adaptive response
+
+```powershell
+# The floor remains fixed; only the separate box instance moves and stops.
+.\build\Release\VulkanRenderingLab.exe --ao-motion-scene --ao-response adaptive --paused --yaw 25 --pitch 28
+# Final PBR view (G switches back to filtered AO/history diagnostics):
+.\build\Release\VulkanRenderingLab.exe --ao-motion-scene --ssao --ao-response adaptive --paused --yaw 25 --pitch 28
+.\tools\verify-ao-motion.ps1
+.\tools\verify-ssao-temporal.ps1 -Varying -Adaptive
+```
+
+The original procedural fixture has identity receiver instance 0 and box instance 1.
+It does not translate the shared legacy character/floor instance. The box holds,
+translates, abruptly stops, returns and holds over an eight-second loop. Interactive
+motion uses elapsed time; bounded runs use frame/60 for repeatability. `--paused`
+freezes the existing lighting animation; the diagnostic box continues moving.
+`--ao-box-step` in bounded runs instead jumps from x=-0.9 to +0.9 on zero-based
+frame 24 and holds, stressing exposed surfaces and newly forming contact AO.
+
+**G** cycles AO → history status → history weight, using the already-written GPU
+metadata. `--ao-history-view ao|status|weight` selects it at startup. Status colors:
+black background, gray reset/off, magenta invalid previous projection, red rejected
+history geometry/identity, green accepted history, cyan history weight reduced by
+adaptive response. Weight maps dark blue (0) to yellow (0.85). Cyan is a response
+adjustment, not proof that previous geometry was invalid. The preview samples the
+RGBA32F next-history metadata after its transfer copy, with an explicit dependency
+covering fragment reads. No new history images or GPU readbacks are needed to view it.
+
+A fixed receiver can keep matching depth, normal and ID while its nearby occluder
+moves. The test exposed delayed **new contact darkening**, rather than a large old
+black trail. Optional `--ao-response adaptive` multiplies the original history
+weight by `1-smoothstep(0.005, 0.05, abs(currentAO-clampedHistoryAO))`. It reduces
+trust in differing AO values after the existing geometry rejection and neighborhood
+clamp; invalid history never becomes valid through this test. It is heuristic:
+noise also changes AO, so the faster response can reduce temporal stability.
+`--ao-response fixed` remains the default. Changing response resets AO history;
+window/full-half rebuild restores response and diagnostic-view settings.
+
+Local development snapshot (2026-10-20, based on d3f7d27 plus uncommitted changes):
+641×361, full AO, plane blur, radius 0.5/bias 0.025, fixed 32 samples, yaw 25°,
+pitch 28°, distance 4.0. For step frames 24–31, mean absolute deviation from
+**current spatial AO**, averaged over identical stationary receiver masks, was
+0.000132180 with fixed response and 0.000099430 with adaptive response (~24.8%
+lower). This is a response-lag diagnostic, not physical AO accuracy or GPU speed.
+Newly exposed receiver pixels retained at most ~0.0032 history weight in the
+checked step frame (small numerical/bilinear edge contributions), below the test's
+0.01 limit. The six GPU scenarios cover fixed/adaptive step, status/weight views,
+continuous varying-sample motion, and half-resolution resize with validation/sync.
+
+The separate corner fluctuation test demonstrates the tradeoff: with adaptive
+response, static display-brightness standard deviation was 0.00792711 versus
+0.00941945 without temporal accumulation (~15.8% reduction); the original fixed
+response achieved 0.00601151 (~36.2% reduction). These use the same earlier corner
+fixture/settings/mask and are **not** the box response-lag measurement. Reproduce:
+
+```powershell
+.\tools\capture-ssao-sequence.ps1 -Adaptive -Output build/ao-sequence-adaptive
+python tools/analyze-ssao-sequence.py build/ao-sequence-adaptive
+```
+
+![History states, weights and box-step response](docs/images/ao-motion-diagnostics.png)
+
+The current character is loaded from `assets/models/mary/Marry.obj`, a static OBJ
+export with geometry/material data rather than skeletons, skin weights or clips.
+Its header references `Marry.blend`, but that source file is not present here;
+no conclusion is drawn about whether the original Blender model was rigged.
+The static `--scene` loader explicitly rejects animation clips and skinned nodes.
+The separate `--animated-scene` path below supports a rigged character, including
+GPU deformation and previous-pose motion. The procedural box is rigid motion only.
+
+
+### Skeletal asset import and CPU pose evaluation (first stage)
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --inspect-animation assets/models/character/character.glb
+# Optional CPU joint export and scientific debug plot (numpy/matplotlib):
+.\build\Release\VulkanRenderingLab.exe --inspect-animation assets/models/character/character.glb --dump-rig build/character-rig.csv
+python tools/plot-rig.py build/character-rig.csv --clip 3
+.\build\Release\AnimationRigTests.exe assets/models/character/character.glb
+```
+
+This command is a separate **CPU import/evaluation path**. Rendering uses the
+GPU path described below; the legacy OBJ scene remains available by default.
+The existing static `--scene` loader retains its explicit rejection of
+skinned/animated assets.
+The user-supplied character binary is not a dependency of the portable tests.
+
+The inspected candidate has 149 nodes, one 132-joint skin, 17 triangle primitives,
+7,789 vertices and seven clips: Angry, Entry, Guide, Hello, Idle, Indroduction
+(name preserved from the file), Thinking. CPU samples at five fractions per clip
+produce changing, finite palettes with valid normalized four-influence weights.
+Idle source keys start at 1/24 s, so its playback duration is 4.125 s, rather than
+its 4.16667 s source end timestamp. Morph data includes sparse Blender accessors;
+46 primitive-target references include shared mesh target sets, not 46 distinct
+facial expressions. The reported morph delta is only across the sampled times.
+The candidate also needs one BLEND material, four double-sided materials and a
+mipmapped sampler, supported by the animated path below.
+
+`AnimationRig` retains node-local vertices, skin-local JOINTS_0/WEIGHTS_0,
+inverse-bind matrices, hierarchy, morph position/normal deltas and weight channels.
+Sparse float accessors are unpacked with their zero bases/overrides; normalized
+integer skin weights are decoded and normalized. Source topology is retained.
+TRS animation supports LINEAR and STEP; rotations use normalized shortest-arc
+quaternion SLERP. Matrix nodes may be static, while animated transform targets
+must use TRS. CUBICSPLINE, extra influence sets and required extensions reject
+explicitly. CPU node-world transforms and mesh-local palettes use:
+
+`world[node] = world[parent] * T * R * S`
+
+`palette[meshNode][joint] = inverse(world[meshNode]) * world[jointNode] * inverseBind[joint]`
+
+Morph weights and bone transforms are evaluated separately; GPU vertex
+processing applies local morph deltas before skinning. Current pose sampling
+uses elapsed clip time, handles nonzero source starts, loop wrap and clamped
+nonloop endpoints, and checks hierarchy cycles, invalid weights/key shapes and
+nonfinite data. The optional joint CSV exports five poses per clip; its plot
+shows computed world-space joints, not a rendered model or GPU validation.
+
+`AnimationRigTests` uses an original tiny rig fixture to test parent transforms,
+mesh/inverse-bind cancellation, LINEAR/STEP/SLERP, equivalent quaternion signs,
+morph interpolation, normalized byte weights, sparse morph overrides, exact loop
+wrap and error cases. Passing a GLB path additionally exercises all clips and skin
+weights on that file. Shared cgltf implementation lives in `Cgltf.cpp`; existing
+static-loader tests continue to pass.
+
+### GPU skeletal deformation and motion
+
+```powershell
+cmake --build build --config Release
+.\build\Release\VulkanRenderingLab.exe --animated-scene assets/models/character/character.glb --animation Hello --paused
+# Freeze a pose for comparison; --paused only freezes the light:
+.\build\Release\VulkanRenderingLab.exe --animated-scene assets/models/character/character.glb --animation Hello --animation-time .52 --paused
+.\tools\verify-skinning.ps1
+```
+
+The animated scene defaults to Idle and a front-facing camera. Select a clip with
+`--animation`; `--animation-time` freezes elapsed clip time in seconds. Bounded
+diagnostic runs advance at 60 Hz, while interactive playback uses elapsed time.
+
+CPU hierarchy evaluation uploads current/previous bone palettes and morph weights
+to an SSBO. A 64-thread compute shader applies local morph deltas and four-influence
+dual-quaternion skinning by default. Quaternion signs are aligned to the largest
+weight influence before blending, then normalized. Rigid rotation transforms
+normals without shrinking the joint. Scale, shear or reflection in an active bone
+falls back to linear matrix blending and inverse-transpose normals for that vertex.
+Four storage
+bindings hold source vertices, poses, morph deltas and output. Two 132-joint mat4
+palettes exceed the guaranteed 16 KiB uniform-buffer range, hence storage buffers.
+
+Compute writes one packed vertex buffer consumed by main, shadow and normal/depth
+prepass; explicit barriers expose its writes to vertex input and shader reads.
+A separate tail stores previous deformed positions. The prepass combines those
+positions with previous camera/model transforms, so motion includes bone and morph
+deformation. History advances only after submission and resets on renderer rebuild.
+
+Animated materials support double-sided normals, alpha blending and mipmapped
+textures (sRGB mip RGB is averaged in linear space). Transparent primitives draw
+after opaque geometry, sorted by current primitive centroid, with depth writes off.
+They are excluded from shadow and AO prepass. This is primitive sorting, not
+order-independent transparency; intersecting transparent geometry can still sort
+incorrectly. Animated normal maps are explicitly rejected pending tangent skinning.
+For double-sided animated primitives only, the importer aligns triangle winding
+with authored normals when every nondegenerate triangle has the opposite sign.
+It logs the repair and leaves mixed/ambiguous cases unchanged. This corrects the
+supplied character's 320-triangle frontHair sheet without changing the GLB,
+UVs or normals; otherwise back-face normal flipping lights that sheet inward.
+
+Verification compares every GPU current/previous position and normal against CPU
+evaluation, checks main/prepass depth agreement, and compares interior opaque
+triangle samples against CPU motion projection. The analytic fixture includes
+joint movement, normalized byte weights and sparse position/normal morph deltas.
+The script covers all seven supplied clips, frozen poses, reset, camera movement,
+resize, AO resolution rebuild and debug toggles with synchronization validation.
+The supplied clips did not show changing morph weights at the inspected sample
+times; the analytic fixture validates morph deformation independently.
+
+GPU timing reports a separate Skinning interval and an independently measured
+complete frame. This first implementation uses host-visible output and CPU
+transparent-centroid evaluation; it makes no throughput claim. Animated instance
+culling, tangent deformation and animation blending remain future work.
+
+For a frozen elbow comparison, run the same Hello pose with each method:
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --animated-scene assets/models/character/character.glb --animation Hello --animation-time .52 --skinning linear --paused
+.\build\Release\VulkanRenderingLab.exe --animated-scene assets/models/character/character.glb --animation Hello --animation-time .52 --skinning dual-quaternion --paused
+```
+
+Linear blending can collapse strongly bent joints even when CPU and GPU match.
+Dual quaternions reduce that rotation-blending defect; they do not fix bad weights,
+intersecting geometry, coarse topology or every joint bulge. Current and previous
+positions use the selected method consistently, including transparency sorting
+and motion verification. Palette entries retain matrices for nonrigid fallback.
+
+Animated rendering also defaults to `--skinning-normals surface`: a second compute
+dispatch rebuilds area-weighted normals from the actual deformed triangles. This
+accounts for variation in skin weights between neighboring vertices, which rotating
+each source normal alone misses at strongly bent joints. A compute-to-compute buffer
+barrier separates position writes from adjacency reads. Adjacency shares the morph
+SSBO, retaining four storage bindings; the existing Skinning timing includes both
+dispatches. Position, silhouette, previous-position motion and shadow geometry are
+unchanged by this normal pass.
+
+UV splits share normals only when source position/normal, skin influences and all
+morph deltas match within import quantization (1e-5). Hard normal splits stay separate;
+degenerate neighborhoods retain the transformed normal. Surface mode derives direction
+from morph-deformed geometry rather than directly applying authored normal deltas.
+Use `--skinning-normals transformed` to retain authored normals/normal morphs and
+compare the previous behavior. Surface reconstruction corrects shading direction,
+but cannot repair intersecting triangles or coarse joint topology.
+
+### Interactive animation controls
+
+![Character playback and skinning comparison panel](docs/images/animation-controls.png)
+
+The animated scene opens a clickable panel. Use its arrows to select clips,
+Play/Pause and Restart for character playback, Loop for repeat behavior, the
+timeline to scrub (scrubbing pauses), and +/- for 0.25x–2x speed. Skinning and
+Normals buttons compare methods at the current pose. These controls are separate
+from Space, which still pauses only the point light.
+
+| Input | Character control |
+| --- | --- |
+| Enter | Play/pause |
+| Comma / period | Previous/next clip |
+| Left / right arrow | Seek by 1/30 second and pause |
+| Home | Restart, retaining play/pause state |
+| Minus / equals | Decrease/increase speed |
+| F12 | Hide/show panel |
+
+`--animation-time` sets an initially paused pose; Enter can resume it. Seeking to
+the end displays the final key instead of wrapping. `--no-animation-panel` starts
+with the panel hidden. Mouse input within the panel does not orbit/zoom the camera.
+The panel scales to small windows and uses logical window coordinates for hit
+testing, independently of framebuffer pixel density.
+
+Playback uses an independent CPU clock. Window/AO-resolution rebuilds preserve
+clip, time, speed, loop, pause, comparison modes and panel visibility. Seeking,
+restarting, clip switching and mode changes invalidate motion and temporal AO
+history. Mode changes wait for the previous GPU frame, finish its verification,
+reset skinning history, and re-record the changed dispatches. Ordinary playback,
+pause and speed changes retain continuous history.
+
+The panel uses a small original bitmap alphabet rendered as colored Vulkan
+triangles; no additional UI dependency is required. Its vertex/indirect buffers
+update after the frame fence, and it draws after debug previews without depth
+writes. Main/total GPU timings include visible panel drawing; hide it for clean
+comparison captures. Portable controller tests cover clock/seek/loop/endpoint and
+hit testing. GPU validation exercises live mode switches and playback preservation
+through resize and AO-resolution rebuilds:
+
+```powershell
+.\tools\verify-animation-controls.ps1
+```
+
+### Hybrid rendering: static Ray Query mirror reflections
+
+| Environment-only baseline | Ray Query reflections |
+| --- | --- |
+| ![Environment-only mirrors](docs/images/ray-query-off.png) | ![Scene geometry reflected by Ray Query](docs/images/ray-query-on.png) |
+
+```powershell
+cmake --build build --config Release
+.\build\Release\VulkanRenderingLab.exe --ray-query-scene --paused
+.\build\Release\VulkanRenderingLab.exe --ray-query-scene --verify-ray-query --paused --frames 4
+.\tools\verify-ray-query.ps1
+```
+
+This first stage keeps the main raster pass and traces one ideal reflection on
+explicit mirror materials using `VK_KHR_ray_query`. The original procedural scene
+contains a reflective floor, a vertical mirror, colored spheres and a purple marker
+behind the default camera. That marker is absent from the primary view but visible
+in the mirror, demonstrating geometry visibility beyond screen-space inputs.
+
+| Input | Reflection control |
+| --- | --- |
+| F11 | Ray reflections / environment-only baseline |
+| F10 | Composite / reflection radiance / hit mask |
+| Mouse drag / wheel | Orbit / zoom |
+
+Equivalent CLI: `--ray-reflections on|off`, `--ray-view 0|1|2`. Hit-mask green means
+a triangle was hit; purple means an environment fallback. Debug output changes only
+the mirror receivers. F7 material-lighting component views remain available.
+
+Device startup reports acceleration-structure, ray-query, deferred-host-operation
+extensions and queried buffer-device-address/AS/rayQuery features. The opt-in scene
+requires Vulkan 1.2+ and the relevant features; unsupported devices receive a clear
+error. Ordinary scenes do not enable Ray Query features or load the Ray Query shader.
+
+Static world-space triangles are expanded into one BLAS and referenced by one
+identity TLAS instance. Device-address allocations, queried scratch alignment and
+AS-write-to-build/shader-read barriers are explicit. Closest-hit primitive IDs and
+barycentrics fetch interpolated normals and constant metallic/roughness materials.
+Hit lighting uses the existing Cook–Torrance/IBL functions plus an opaque shadow
+query toward the point light. Misses sample the environment. The result replaces
+the mirror's specular IBL contribution, retaining primary direct lighting.
+
+F11/F10 update a fenced uniform buffer without rebuilding the acceleration structures.
+Resize and AO-resolution rebuilds recreate the static structures and preserve the
+reflection toggle/debug state. `--verify-ray-query` additionally casts 128 GPU rays
+and compares hit/miss classification, nearest distance, reconstructed barycentric
+position and hit material with a CPU triangle-intersection reference. The validation
+script checks toggle/debug/camera/resize/resolution paths and main/prepass depth under
+Vulkan synchronization validation. Portable tests cover analytic intersections,
+barycentrics, ray intervals and procedural scene winding.
+
+The base sample uses static opaque constant-material geometry and one reflection bounce. A mirror
+encountered inside another reflection uses local IBL shading, not recursive tracing.
+An optional animated character path is described below. Stochastic rough-reflection
+sampling, reflection temporal accumulation and denoising are not implemented. Ray Query
+work currently belongs to the Main GPU interval; startup AS construction is separate
+from rendered-frame timing. No performance claim is inferred from validation runs.
+
+Reference: [Khronos basic ray-query sample](https://docs.vulkan.org/samples/latest/samples/extensions/ray_queries/README.html).
+
+### Animated character in ray-traced mirrors
+
+![Animated character and its ray-traced reflections](docs/images/ray-query-character.png)
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ray-query-scene --animated-scene assets/models/character/character.glb --animation Hello --paused
+.\tools\verify-ray-character.ps1
+```
+
+The character joins the same mirror room with its existing playback panel. Enter
+pauses the character, Space pauses the light, F12 hides the panel, F11 toggles ray
+reflections. Its placement is applied once inside the skinning palette so all
+passes share scene-space vertices; static room geometry keeps its own normals.
+
+Every rendered frame runs GPU skinning/surface normals, gathers the resulting
+positions/normals/UVs into indexed ray-triangle records, refits the BLAS, refits the
+TLAS, then renders shadows/prepass/main. Compute-write → AS-read, BLAS-write →
+TLAS-read, and AS-write → shader-read dependencies are explicit. The structures
+were built with ALLOW_UPDATE, retain scratch/instance buffers, and keep fixed
+topology (including finite degenerate triangles). Source vertices are not read
+back during ordinary playback.
+
+Closest-hit shading supports this character's single shared sRGB base-color atlas.
+BLEND primitives use an explicit 0.5 alpha-cutout approximation in reflection and
+ray-shadow queries; they do not implement translucent light transport. Ray Query
+candidate intersections are confirmed only after that test. The main raster pass
+retains its existing alpha blending. Atlas lookup currently uses LOD 0; additional
+material maps and general multi-texture hit shading remain unsupported.
+
+The first dynamic implementation refits one combined scene BLAS and one TLAS,
+including static room triangles. It prioritizes correctness over optimal update
+cost; separating static/dynamic BLASes and choosing refit/rebuild policies remain
+future work. GPU timing reports `AS Update` for ray-triangle gathering + BLAS/TLAS
+updates, separately from Skinning and Main, while total time is measured independently.
+
+Verification compares every ray-triangle position/normal with completed raster
+skinning vertices (whose deformation has its own CPU reference), then compares 128
+alpha-aware GPU queries with CPU nearest intersections on the current pose. Tests
+cover playback, frozen bent poses, linear/authored modes, live control changes,
+resize, AO-resolution rebuild and reflection toggling with synchronization validation.

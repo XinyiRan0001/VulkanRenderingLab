@@ -14,11 +14,17 @@ find_path(STB_INCLUDE_DIRS "stb_image.h" REQUIRED)
 add_executable(VulkanRenderingLab
     src/main.cpp
     src/Core/GLTFLoader.cpp
+    src/Core/Cgltf.cpp
+    src/Core/AnimationRig.cpp
+    src/Core/GpuSkinning.cpp
+    src/Core/AnimationPanel.cpp
+    src/Core/RayQueryReflections.cpp
     src/Core/InstancedScene.cpp
     src/Core/GpuCulling.cpp
     src/Core/CullingBatches.cpp
     src/Core/HiZ.cpp
     src/Core/ScenePrepass.cpp
+    src/Core/TemporalAo.cpp
     src/Core/HiZInspector.cpp
     src/Core/CullingBenchmark.cpp
     src/Core/FrustumDebug.cpp
@@ -144,13 +150,21 @@ set(SHADER_OUTPUTS)
 foreach(SHADER IN LISTS RENDERER_SHADERS)
     get_filename_component(SHADER_NAME "${SHADER}" NAME)
     set(SPIRV "${CMAKE_CURRENT_BINARY_DIR}/shaders/${SHADER_NAME}.spv")
+    set(SHADER_FLAGS)
+    if(SHADER_NAME MATCHES "^ray_query")
+        list(APPEND SHADER_FLAGS --target-env=vulkan1.2)
+    endif()
     add_custom_command(OUTPUT "${SPIRV}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
-        COMMAND "${Vulkan_GLSLC_EXECUTABLE}" "${SHADER}" -o "${SPIRV}"
+        COMMAND "${Vulkan_GLSLC_EXECUTABLE}" ${SHADER_FLAGS} "${SHADER}" -o "${SPIRV}"
         DEPENDS "${SHADER}" VERBATIM)
     list(APPEND SHADER_OUTPUTS "${SPIRV}")
 endforeach()
-add_custom_target(RendererShaders DEPENDS ${SHADER_OUTPUTS})
+set(RAY_SHADER "${CMAKE_CURRENT_BINARY_DIR}/shaders/triangle_ray.frag.spv")
+add_custom_command(OUTPUT "${RAY_SHADER}"
+    COMMAND "${Vulkan_GLSLC_EXECUTABLE}" --target-env=vulkan1.2 -DENABLE_RAY_QUERY=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" -o "${RAY_SHADER}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" VERBATIM)
+add_custom_target(RendererShaders DEPENDS ${SHADER_OUTPUTS} "${RAY_SHADER}")
 add_dependencies(VulkanRenderingLab RendererShaders)
 
 if(MSVC)
@@ -158,7 +172,7 @@ if(MSVC)
 endif()
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(GLTFLoaderTests tests/GLTFLoaderTests.cpp src/Core/GLTFLoader.cpp src/Core/TextureData.cpp)
+    add_executable(GLTFLoaderTests tests/GLTFLoaderTests.cpp src/Core/GLTFLoader.cpp src/Core/Cgltf.cpp src/Core/TextureData.cpp)
     target_include_directories(GLTFLoaderTests PRIVATE src/Core third_party/cgltf ${STB_INCLUDE_DIRS})
     target_link_libraries(GLTFLoaderTests PRIVATE Vulkan::Vulkan glfw glm::glm)
     add_test(NAME GLTFLoaderTests COMMAND GLTFLoaderTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/gltf-validation")
@@ -196,4 +210,45 @@ if(BUILD_TESTING)
     target_include_directories(CullingBatchesTests PRIVATE src)
     target_link_libraries(CullingBatchesTests PRIVATE Vulkan::Vulkan glfw glm::glm)
     add_test(NAME CullingBatchesTests COMMAND CullingBatchesTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(AoBlurMathTests tests/AoBlurMathTests.cpp)
+    target_include_directories(AoBlurMathTests PRIVATE src)
+    target_link_libraries(AoBlurMathTests PRIVATE glm::glm)
+    add_test(NAME AoBlurMathTests COMMAND AoBlurMathTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(MotionMathTests tests/MotionMathTests.cpp)
+    target_include_directories(MotionMathTests PRIVATE src)
+    target_link_libraries(MotionMathTests PRIVATE glm::glm)
+    add_test(NAME MotionMathTests COMMAND MotionMathTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(AoMotionSceneTests tests/AoMotionSceneTests.cpp)
+    target_include_directories(AoMotionSceneTests PRIVATE src)
+    target_link_libraries(AoMotionSceneTests PRIVATE Vulkan::Vulkan glfw glm::glm)
+    add_test(NAME AoMotionSceneTests COMMAND AoMotionSceneTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(AnimationRigTests tests/AnimationRigTests.cpp src/Core/AnimationRig.cpp src/Core/Cgltf.cpp)
+    target_include_directories(AnimationRigTests PRIVATE src third_party/cgltf)
+    target_link_libraries(AnimationRigTests PRIVATE glm::glm)
+    add_test(NAME AnimationRigTests COMMAND AnimationRigTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/animation-validation/rig.gltf")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(AnimationControlsTests tests/AnimationControlsTests.cpp)
+    target_include_directories(AnimationControlsTests PRIVATE src)
+    add_test(NAME AnimationControlsTests COMMAND AnimationControlsTests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(RayQueryMathTests tests/RayQueryMathTests.cpp)
+    target_include_directories(RayQueryMathTests PRIVATE src)
+    target_link_libraries(RayQueryMathTests PRIVATE Vulkan::Vulkan glfw glm::glm)
+    add_test(NAME RayQueryMathTests COMMAND RayQueryMathTests)
 endif()

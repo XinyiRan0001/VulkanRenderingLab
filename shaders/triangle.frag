@@ -1,4 +1,7 @@
-#version 450
+#version 460
+#ifdef ENABLE_RAY_QUERY
+#extension GL_EXT_ray_query : require
+#endif
 
 struct PointLight
 {
@@ -59,6 +62,13 @@ layout(binding = 10) uniform sampler2D occlusionMap;
 layout(binding = 11) uniform sampler2D emissiveMap;
 layout(binding = 14) uniform sampler2D screenAo;
 layout(location = 0) out vec4 outColor;
+#ifdef ENABLE_RAY_QUERY
+layout(set=1,binding=0) uniform accelerationStructureEXT rayScene;
+struct RayTriangle{vec4 a,b,c,na,nb,nc,color,properties,uv01,uv2;};
+layout(set=1,binding=1,std430) readonly buffer RayTriangles{RayTriangle rayTriangles[];};
+layout(set=1,binding=2) uniform RaySettings{vec4 settings;} ray;
+layout(set=1,binding=7) uniform sampler2D rayAtlas;
+#endif
 
 
 // =============================================================
@@ -714,12 +724,44 @@ vec3 RotateEnvironment(vec3 direction)
                 -s * direction.x + c * direction.z);
 }
 
+#ifdef ENABLE_RAY_QUERY
+vec2 RayUv(RayTriangle t,vec2 bary){return t.uv01.xy*(1-bary.x-bary.y)+t.uv01.zw*bary.x+t.uv2.xy*bary.y;}
+void ProceedMirror(rayQueryEXT query){while(rayQueryProceedEXT(query)){
+    if(rayQueryGetIntersectionTypeEXT(query,false)==gl_RayQueryCandidateIntersectionTriangleEXT){
+        RayTriangle t=rayTriangles[rayQueryGetIntersectionPrimitiveIndexEXT(query,false)];bool accept=true;
+        if((int(t.properties.w)&2)!=0){vec2 bary=rayQueryGetIntersectionBarycentricsEXT(query,false);float alpha=t.color.a;if((int(t.properties.w)&1)!=0)alpha*=textureLod(rayAtlas,RayUv(t,bary),0).a;accept=alpha>=.5;}
+        if(accept)rayQueryConfirmIntersectionEXT(query);
+    }
+}}
+vec3 TraceMirror(vec3 p,vec3 n,vec3 viewDirection,out bool hit,out float distance){
+    vec3 direction=normalize(reflect(-viewDirection,n));vec3 origin=p+n*ray.settings.z;
+    rayQueryEXT query;rayQueryInitializeEXT(query,rayScene,0,255,origin,ray.settings.z,direction,ray.settings.w);ProceedMirror(query);
+    hit=rayQueryGetIntersectionTypeEXT(query,true)==gl_RayQueryCommittedIntersectionTriangleEXT;distance=ray.settings.w;
+    if(!hit)return ubo.shadowSettings.y!=0?textureLod(prefilteredEnvironmentMap,RotateEnvironment(direction),0).rgb:vec3(0);
+    distance=rayQueryGetIntersectionTEXT(query,true);uint id=rayQueryGetIntersectionPrimitiveIndexEXT(query,true);vec2 bary=rayQueryGetIntersectionBarycentricsEXT(query,true);RayTriangle triangle=rayTriangles[id];
+    vec3 normal=normalize(triangle.na.xyz*(1-bary.x-bary.y)+triangle.nb.xyz*bary.x+triangle.nc.xyz*bary.y);if(dot(normal,direction)>0)normal=-normal;
+    vec3 position=origin+direction*distance,lightOffset=ubo.pointLight.position.xyz-position;float lightDistance=length(lightOffset);vec3 lightDirection=lightOffset/max(lightDistance,.0001);
+    float visibility=1;
+    if(lightDistance>4*ray.settings.z && dot(normal,lightDirection)>0){rayQueryEXT shadow;rayQueryInitializeEXT(shadow,rayScene,gl_RayFlagsTerminateOnFirstHitEXT,255,position+normal*ray.settings.z,ray.settings.z,lightDirection,lightDistance-2*ray.settings.z);ProceedMirror(shadow);if(rayQueryGetIntersectionTypeEXT(shadow,true)!=gl_RayQueryCommittedIntersectionNoneEXT)visibility=0;}
+    float metallic=triangle.properties.x,roughness=triangle.properties.y;vec3 color=triangle.color.rgb;if((int(triangle.properties.w)&1)!=0)color*=textureLod(rayAtlas,RayUv(triangle,bary),0).rgb;
+    vec3 radiance=EvaluateCookTorranceLight(color,normal,-direction,lightDirection,ubo.pointLight.color.rgb*ubo.pointLight.color.a/max(lightDistance*lightDistance,.01),metallic,roughness)*visibility;
+    if(ubo.shadowSettings.y!=0){
+        float ndv=max(dot(normal,-direction),.001);vec3 fresnel=FresnelSchlickRoughness(ndv,mix(vec3(.04),color,metallic),roughness);vec2 brdf=texture(brdfLUT,vec2(ndv,roughness)).rg;
+        radiance+=(1-fresnel)*(1-metallic)*texture(irradianceMap,RotateEnvironment(normal)).rgb*color;
+        radiance+=textureLod(prefilteredEnvironmentMap,RotateEnvironment(reflect(direction,normal)),roughness*7).rgb*(fresnel*brdf.x+brdf.y);
+    }else radiance+=color*.04*(1-metallic);
+    return radiance;
+}
+#endif
 void main()
 {
     // =========================================================
     // Material properties
     // =========================================================
 
+    float alpha=1;
+    if((material.flags.y&32)!=0){alpha=material.baseColor.a;if(material.flags.x!=0)alpha*=texture(texSampler,fragTexCoord).a;}
+    if(alpha<=.001)discard;
     vec3 baseColor;
 
     if (material.flags.x != 0)
@@ -743,6 +785,7 @@ void main()
             fragNormal
         );
 
+    if((material.flags.y & 16)!=0 && !gl_FrontFacing)normal=-normal;
     if ((material.flags.y & 1) != 0) {
         vec3 tangent = normalize(fragTangent.xyz - normal * dot(normal, fragTangent.xyz));
         vec3 bitangent = cross(normal, tangent) * fragTangent.w;
@@ -871,6 +914,14 @@ void main()
 
     vec3 environmentLighting =
         vec3(0.0);
+#ifdef ENABLE_RAY_QUERY
+    bool useRay=material.properties.w>.5 && ray.settings.x>.5;
+    vec3 rayRadiance=vec3(0);bool rayHit=false;float rayDistance=0;
+    if(useRay){rayRadiance=TraceMirror(fragWorldPosition,normal,viewDirection,rayHit,rayDistance);
+        if(ray.settings.y>1.5){outColor=vec4(rayHit?vec3(.05,.8,.15):vec3(.5,.05,.7),1);return;}
+        if(ray.settings.y>.5){outColor=vec4(1-exp(-rayRadiance),1);return;}
+    }
+#endif
 
     if (environmentLightingEnabled)
     {
@@ -961,6 +1012,9 @@ void main()
                 environmentBRDF.x +
                 environmentBRDF.y
             );
+#ifdef ENABLE_RAY_QUERY
+        if(useRay)specularEnvironmentLighting=rayRadiance*fresnel;
+#endif
 
         // Screen-space AO affects indirect diffuse only. Existing material AO is unchanged.
         if(ubo.lightingSettings.z>.5) diffuseEnvironmentLighting*=texelFetch(screenAo,ivec2(gl_FragCoord.xy),0).r;
@@ -982,6 +1036,9 @@ void main()
             1.0 -
             metallic
         );
+#ifdef ENABLE_RAY_QUERY
+    if(useRay && !environmentLightingEnabled)fallbackAmbient+=rayRadiance*FresnelSchlickRoughness(max(dot(normal,viewDirection),.001),mix(vec3(.04),baseColor,metallic),roughness);
+#endif
 
     if(ubo.lightingSettings.z>.5) fallbackAmbient*=texelFetch(screenAo,ivec2(gl_FragCoord.xy),0).r;
 
@@ -1022,6 +1079,6 @@ void main()
     outColor =
         vec4(
             mappedColor,
-            1.0
+            alpha
         );
 }

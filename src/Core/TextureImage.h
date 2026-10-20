@@ -38,7 +38,7 @@ public:
         const PhysicalDevice& physicalDevice,
         const LogicalDevice& logicalDevice,
         const TextureData& textureData,
-        bool srgb = true
+        bool srgb = true, bool mipmapped=false
     );
 
     TextureImage(

@@ -7,6 +7,7 @@
 #include "Swapchain.h"
 #include "CommandManager.h"
 #include <vector>
+#include <fstream>
 
 class Renderer
 {
@@ -25,6 +26,8 @@ public:
     void CaptureNextFrame(const std::string& path) { m_CapturePath = path; }
     void WaitForFrame() const;
     void StartBenchmark(int shadowMode);
+    void StartAoTiming(const std::string& path,int warmup,int samples,const std::string& metadata);
+    void FinishAoTiming();
     void SetQuiet(bool quiet) { m_Quiet = quiet; }
 
 private:
@@ -38,11 +41,17 @@ private:
 
     std::string m_CapturePath;
     bool m_HasSubmittedFrame = false;
+    std::ofstream m_AoTimingFile;
+    int m_AoTimingSeen=0,m_AoTimingWarmup=0,m_AoTimingExpected=0,m_AoTimingWritten=0;
     bool m_Quiet = false;
     bool m_NeedsRebuild = false;
     int m_BenchmarkShadowMode = 0;
 
     double m_GpuTimingAccumulator = 0.0;
+    double m_ResolveTimingAccumulator = 0.0;
+    double m_TemporalTimingAccumulator = 0.0;
+    double m_SkinningTimingAccumulator=0;
+    double m_AccelerationTimingAccumulator=0;
     double m_BlurTimingAccumulator = 0.0;
     double m_SsaoTimingAccumulator = 0.0;
     double m_PrepassTimingAccumulator = 0.0;

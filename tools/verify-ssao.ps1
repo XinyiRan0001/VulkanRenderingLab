@@ -25,6 +25,25 @@ try {
             Write-Host "PASS $scene distance=$distance minimum=$minimum"
         }
     }
+    # Same deterministic raw input, two guidance modes. The GPU readback also
+    # checks the bilateral result against a CPU reference and white background.
+    foreach ($scene in @("tilted-corner", "thin-layers")) {
+        foreach ($guidance in @("depth", "plane")) {
+            $log = Join-Path $logDir "$scene-$guidance.log"
+            $cameraArgs = if ($scene -eq "tilted-corner") {
+                @("--yaw", "20", "--pitch", "9", "--ao-radius", "0.2", "--ao-bias", "0.01")
+            } else { @("--yaw", "0", "--pitch", "12") }
+            & $exe --scene "assets/models/ssao-validation/$scene.gltf" --ssao-blurred --ao-blur $guidance --verify-prepass --paused --width 640 --height 360 --ao-samples 16 --frames 2 @cameraArgs *> $log
+            if ($LASTEXITCODE -ne 0) { throw "AO guidance test failed: $log" }
+            $content = Get-Content -Raw $log
+            if ($content -match 'VUID-|SYNC-HAZARD|Validation Error') { throw "Vulkan validation failed: $log" }
+            $reference = [regex]::Match($content, '\[Blur Reference\] (\d+) pixels max error ([0-9.eE+-]+).*guidance ' + $guidance)
+            if (!$reference.Success -or [int]$reference.Groups[1].Value -eq 0) { throw "Missing covered blur reference: $log" }
+            $blur = [regex]::Match($content, '\[Blur Verify\].*min ([0-9.eE+-]+) max ([0-9.eE+-]+)')
+            if (!$blur.Success) { throw "Missing blurred AO verification: $log" }
+            Write-Host "PASS $scene guidance=$guidance GPU/CPU reference checked"
+        }
+    }
 } finally {
     Pop-Location
     $env:VK_INSTANCE_LAYERS = $oldLayers

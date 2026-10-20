@@ -4,8 +4,9 @@ layout(binding=0) uniform sampler2D normalTexture;
 layout(binding=1) uniform sampler2D depthTexture;
 layout(std140,binding=2) uniform Preview {
     mat4 inverseProjection; mat4 inverseView; ivec4 settings; vec4 parameters;
-    mat4 projection; vec4 kernel[64];
+    mat4 projection; vec4 kernel[64]; ivec4 aoSettings; ivec4 sampling;
 } v;
+layout(r32ui,binding=7) uniform writeonly uimage2D guideMap;
 layout(r32f,binding=3) uniform writeonly image2D rawAo;
 vec3 reconstruct(ivec2 pixel,float depth) {
     vec2 uv=(vec2(pixel)+.5)/vec2(v.settings.yz);
@@ -13,23 +14,36 @@ vec3 reconstruct(ivec2 pixel,float depth) {
     return p.xyz/p.w;
 }
 void main() {
-    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy), size=v.settings.yz;
-    if(any(greaterThanEqual(pixel,size))) return;
+    ivec2 outputPixel=ivec2(gl_GlobalInvocationID.xy), size=v.settings.yz;
+    if(any(greaterThanEqual(outputPixel,v.aoSettings.xy))) return;
+    ivec2 pixel=outputPixel;
+    if(v.aoSettings.z!=0) {
+        ivec2 base=outputPixel*2;pixel=base;float nearest=1;
+        for(int y=0;y<2;++y)for(int x=0;x<2;++x) {
+            ivec2 q=base+ivec2(x,y);if(any(greaterThanEqual(q,size)))continue;
+            float d=texelFetch(depthTexture,q,0).r;
+            if(d<nearest) { nearest=d;pixel=q; }
+        }
+    }
+    imageStore(guideMap,outputPixel,uvec4(uint(pixel.y*size.x+pixel.x)));
     float visibility=1;
     vec4 normal=texelFetch(normalTexture,pixel,0);
     float depth=texelFetch(depthTexture,pixel,0).r;
     if(normal.a>0 && depth<1) {
         vec3 p=reconstruct(pixel,depth), n=normalize(normal.xyz);
-        // A stable 4x4 rotation tile: deterministic, no per-frame shimmer.
+        // The fixed path preserves the original image. The varying path uses a
+        // reproducible 64-frame sequence, independent of whether history is ON.
         const float angles[16]=float[](0.07,0.67,0.27,0.87,0.47,0.17,0.97,0.57,0.77,0.37,0.12,0.72,0.32,0.92,0.52,0.22);
         float angle=angles[(pixel.y%4)*4+pixel.x%4]*6.2831853;
+        if(v.sampling.y!=0)angle+=fract(float(v.sampling.x)*.61803398875)*6.2831853;
         vec3 axis=abs(n.z)<.999 ? vec3(0,0,1):vec3(0,1,0);
         vec3 t=normalize(cross(axis,n)), b=cross(n,t);
         vec3 tangent=t*cos(angle)+b*sin(angle);
         mat3 basis=mat3(tangent,cross(n,tangent),n);
         float radius=v.parameters.y, bias=v.parameters.z, blocked=0;
         for(int i=0;i<v.settings.w;++i) {
-            vec3 q=p+basis*v.kernel[i].xyz*radius;
+            int index=v.sampling.y!=0?(i+v.sampling.x*17)%64:i;
+            vec3 q=p+basis*v.kernel[index].xyz*radius;
             vec4 clip=v.projection*vec4(q,1);
             if(clip.w<=0) continue;
             vec3 ndc=clip.xyz/clip.w;
@@ -49,5 +63,5 @@ void main() {
         // Missing screen-space information contributes no occlusion, avoiding edge bands.
         visibility=clamp(1-blocked/float(v.settings.w),0,1);
     }
-    imageStore(rawAo,pixel,vec4(visibility));
+    imageStore(rawAo,outputPixel,vec4(visibility));
 }

@@ -4,34 +4,48 @@ layout(binding=0) uniform sampler2D normalTexture;
 layout(binding=1) uniform sampler2D depthTexture;
 layout(std140,binding=2) uniform Preview {
     mat4 inverseProjection; mat4 inverseView; ivec4 settings; vec4 parameters;
-    mat4 projection; vec4 kernel[64];
+    mat4 projection; vec4 kernel[64]; ivec4 aoSettings; ivec4 sampling;
 } v;
+layout(binding=8) uniform usampler2D guideMap;
 layout(binding=4) uniform sampler2D rawAo;
 layout(r32f,binding=5) uniform writeonly image2D blurredAo;
-float distanceAt(ivec2 p) {
+ivec2 guideAt(ivec2 p) {
+    if(v.aoSettings.z==0)return p;
+    uint i=texelFetch(guideMap,p,0).r;
+    return ivec2(int(i)%v.settings.y,int(i)/v.settings.y);
+}
+vec3 positionAt(ivec2 p) {
+    p=guideAt(p);
     float d=texelFetch(depthTexture,p,0).r;
     vec2 uv=(vec2(p)+.5)/vec2(v.settings.yz);
     vec4 view=v.inverseProjection*vec4(uv*2-1,d,1);
-    return -view.z/view.w;
+    return view.xyz/view.w;
 }
 void main() {
-    ivec2 p=ivec2(gl_GlobalInvocationID.xy), size=v.settings.yz;
+    ivec2 p=ivec2(gl_GlobalInvocationID.xy), size=v.aoSettings.xy;
     if(any(greaterThanEqual(p,size))) return;
-    vec4 center=texelFetch(normalTexture,p,0);
+    vec4 center=texelFetch(normalTexture,guideAt(p),0);
     if(center.a<=0) { imageStore(blurredAo,p,vec4(1));return; }
     vec3 n=normalize(center.xyz);
-    float z=distanceAt(p), sum=0, weights=0;
+    vec3 position=positionAt(p);
+    float sum=0, weights=0;
     // World/view-distance sigma; independent of near/far projection nonlinearity.
     float sigma=max(.002,v.parameters.y*.1);
     for(int y=-2;y<=2;++y) for(int x=-2;x<=2;++x) {
         ivec2 q=p+ivec2(x,y);
         if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,size))) continue;
-        vec4 neighbor=texelFetch(normalTexture,q,0);
+        vec4 neighbor=texelFetch(normalTexture,guideAt(q),0);
         if(neighbor.a<=0) continue;
-        float dz=distanceAt(q)-z;
+        vec3 delta=positionAt(q)-position;
+        vec3 neighborNormal=normalize(neighbor.xyz);
+        bool planeAware=v.parameters.w>.5;
+        if(planeAware && length(delta)>v.parameters.y) continue;
+        // Same sloped surface can have large camera-Z differences. Compare both
+        // tangent planes symmetrically instead, retaining the Z baseline for inspection.
+        float dz=planeAware?max(abs(dot(n,delta)),abs(dot(neighborNormal,delta))):abs(delta.z);
         float spatial=exp(-float(x*x+y*y)/4.5);
         float depth=exp(-.5*dz*dz/(sigma*sigma));
-        float normal=pow(max(dot(n,normalize(neighbor.xyz)),0),32);
+        float normal=pow(max(dot(n,neighborNormal),0),32);
         float w=spatial*depth*normal;
         sum+=texelFetch(rawAo,q,0).r*w;weights+=w;
     }

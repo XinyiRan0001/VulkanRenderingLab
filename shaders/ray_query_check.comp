@@ -1,0 +1,16 @@
+#version 460
+#extension GL_EXT_ray_query : require
+layout(local_size_x=64) in;
+layout(set=0,binding=0) uniform accelerationStructureEXT scene;
+struct RayTriangle{vec4 a,b,c,na,nb,nc,color,properties,uv01,uv2;};
+layout(set=0,binding=1,std430) readonly buffer Triangles{RayTriangle triangles[];};
+layout(set=0,binding=7) uniform sampler2D atlas;
+struct CheckRay{vec4 origin;vec4 direction;vec4 result;uvec4 hit;};
+layout(set=0,binding=3,std430) buffer Results{CheckRay rays[];};
+void main(){uint i=gl_GlobalInvocationID.x;rayQueryEXT query;rayQueryInitializeEXT(query,scene,0,255,rays[i].origin.xyz,rays[i].origin.w,rays[i].direction.xyz,rays[i].direction.w);while(rayQueryProceedEXT(query)){
+ if(rayQueryGetIntersectionTypeEXT(query,false)==gl_RayQueryCandidateIntersectionTriangleEXT){RayTriangle t=triangles[rayQueryGetIntersectionPrimitiveIndexEXT(query,false)];bool accept=true;if((int(t.properties.w)&2)!=0){vec2 b=rayQueryGetIntersectionBarycentricsEXT(query,false);vec2 uv=t.uv01.xy*(1-b.x-b.y)+t.uv01.zw*b.x+t.uv2.xy*b.y;float a=t.color.a;if((int(t.properties.w)&1)!=0)a*=textureLod(atlas,uv,0).a;accept=a>=.5;}if(accept)rayQueryConfirmIntersectionEXT(query);}
+ }
+    bool hit=rayQueryGetIntersectionTypeEXT(query,true)==gl_RayQueryCommittedIntersectionTriangleEXT;
+    rays[i].hit=uvec4(hit?rayQueryGetIntersectionPrimitiveIndexEXT(query,true):0xffffffffu,0,0,0);
+    rays[i].result=hit?vec4(rayQueryGetIntersectionTEXT(query,true),rayQueryGetIntersectionBarycentricsEXT(query,true),0):vec4(0);
+}

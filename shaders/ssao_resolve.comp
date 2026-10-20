@@ -1,0 +1,46 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform sampler2D normalTexture;
+layout(binding=1) uniform sampler2D depthTexture;
+layout(std140,binding=2) uniform Preview {
+    mat4 inverseProjection; mat4 inverseView; ivec4 settings; vec4 parameters;
+    mat4 projection; vec4 kernel[64]; ivec4 aoSettings; ivec4 sampling;
+} v;
+layout(binding=6) uniform sampler2D blurredAo;
+layout(binding=8) uniform usampler2D guideMap;
+layout(r32f,binding=9) uniform writeonly image2D resolvedAo;
+vec3 positionAt(ivec2 p) {
+    vec2 uv=(vec2(p)+.5)/vec2(v.settings.yz);
+    vec4 q=v.inverseProjection*vec4(uv*2-1,texelFetch(depthTexture,p,0).r,1);
+    return q.xyz/q.w;
+}
+void main() {
+    ivec2 p=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(p,v.settings.yz)))return;
+    if(v.aoSettings.z==0) {imageStore(resolvedAo,p,vec4(texelFetch(blurredAo,p,0).r));return;}
+    vec4 center=texelFetch(normalTexture,p,0);
+    if(center.a<=0) {imageStore(resolvedAo,p,vec4(1));return;}
+    vec3 position=positionAt(p), n=normalize(center.xyz);
+    // Low-cell centers are at full coordinates (2*x+1,2*y+1). NPOT edge cells
+    // are clipped, but guide geometry always uses the actual chosen full pixel.
+    vec2 lowCoord=(vec2(p)+.5)*.5-.5;
+    ivec2 base=ivec2(floor(lowCoord));float sum=0,weights=0;
+    float sigma=max(.002,v.parameters.y*.1);
+    for(int y=0;y<2;++y)for(int x=0;x<2;++x) {
+        ivec2 q=base+ivec2(x,y);
+        if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,v.aoSettings.xy)))continue;
+        uint index=texelFetch(guideMap,q,0).r;
+        ivec2 guide=ivec2(int(index)%v.settings.y,int(index)/v.settings.y);
+        vec4 neighbor=texelFetch(normalTexture,guide,0);if(neighbor.a<=0)continue;
+        vec3 m=normalize(neighbor.xyz), delta=positionAt(guide)-position;
+        float normal=dot(n,m);
+        float separation=max(abs(dot(n,delta)),abs(dot(m,delta)));
+        // Explicit rejection prevents weak cross-layer weights being normalized
+        // into strong leaks when the receiver has no matching low-res sample.
+        if(normal<.8 || separation>3*sigma || length(delta)>v.parameters.y)continue;
+        vec2 spatial=max(vec2(0),vec2(1)-abs(lowCoord-vec2(q)));
+        float w=spatial.x*spatial.y*exp(-.5*separation*separation/(sigma*sigma))*pow(max(normal,0),32);
+        sum+=texelFetch(blurredAo,q,0).r*w;weights+=w;
+    }
+    imageStore(resolvedAo,p,vec4(weights>1e-6?clamp(sum/weights,0,1):1));
+}

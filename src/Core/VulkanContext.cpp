@@ -15,6 +15,11 @@
 #include "UniformBufferObject.h"
 #include "DescriptorManager.h"
 #include "GLTFLoader.h"
+#include "AoMotionScene.h"
+#include "GpuSkinning.h"
+#include "AnimationPanel.h"
+#include "RayQueryReflections.h"
+#include "RayQueryScene.h"
 #include "DescriptorSetLayout.h"
 #include "OBJLoader.h"
 #include "MeshData.h"
@@ -23,6 +28,7 @@
 #include "HiZ.h"
 #include "ScenePrepass.h"
 #include <tuple>
+#include <map>
 #include "HiZInspector.h"
 #include "FrustumDebug.h"
 #include "TextureData.h"
@@ -57,13 +63,14 @@ const char* LightingViewName(int mode) {
 }
 }
 
-VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass)
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass, bool halfAo, bool aoMotionScene, const std::string& animatedPath, bool rayScene, bool verifyRay)
     : m_Window(window)
 {
     // =========================================================
     // Vulkan base objects
     // =========================================================
 
+    m_HalfAo=halfAo;
     if (stressCount > 10000 || (stressCount && !scenePath.empty()))
         throw std::runtime_error("--stress-count accepts 1..10000 and cannot be combined with --scene");
     if (occlusionScene && (!stressCount || !scenePath.empty())) throw std::runtime_error("Occlusion scene requires a stress grid");
@@ -80,7 +87,7 @@ VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint3
     );
 
     m_LogicalDevice = std::make_unique<LogicalDevice>(
-        *m_PhysicalDevice
+        *m_PhysicalDevice,rayScene
     );
 
     m_Swapchain = std::make_unique<Swapchain>(
@@ -201,12 +208,13 @@ m_DescriptorSetLayout =
 // Main graphics pipeline
 // =========================================================
 
+if(rayScene)m_Reflections=std::make_unique<RayQueryReflections>(*m_PhysicalDevice,*m_LogicalDevice);
 m_GraphicsPipeline =
     std::make_unique<GraphicsPipeline>(
         *m_LogicalDevice,
         *m_RenderPass,
         *m_Swapchain,
-        m_DescriptorSetLayout->GetHandle()
+        m_DescriptorSetLayout->GetHandle(),m_Reflections?m_Reflections->Layout():VK_NULL_HANDLE
     );
 
     m_ShadowPipeline =
@@ -236,9 +244,14 @@ m_GraphicsPipeline =
     // =========================================================
 
     MeshData combinedMesh;
-    m_IsGltfScene = !scenePath.empty();
+    const glm::mat4 characterPlacement=rayScene?glm::translate(glm::mat4(1),glm::vec3(0,.07f,.1f))*glm::rotate(glm::mat4(1),glm::radians(-90.f),glm::vec3(0,1,0)):glm::mat4(1);
+    m_IsGltfScene = !scenePath.empty() || aoMotionScene || !animatedPath.empty() || rayScene;
     if (m_IsGltfScene) {
-        combinedMesh = GLTFLoader::Load(scenePath);
+        if(!animatedPath.empty()){
+            m_AnimationRig=std::make_unique<AnimationRig>(AnimationRig::Load(animatedPath));combinedMesh=GpuSkinning::BuildMesh(*m_AnimationRig,GLTFLoader::Load(animatedPath,true),!rayScene,characterPlacement);
+            if(rayScene){auto room=CreateRayQueryScene(true);uint32_t vertexBase=uint32_t(combinedMesh.vertices.size()),indexBase=uint32_t(combinedMesh.indices.size());int materialBase=int(combinedMesh.materials.size());combinedMesh.vertices.insert(combinedMesh.vertices.end(),room.vertices.begin(),room.vertices.end());for(auto index:room.indices)combinedMesh.indices.push_back(index+vertexBase);for(auto sub:room.subMeshes){sub.firstIndex+=indexBase;sub.materialId+=materialBase;combinedMesh.subMeshes.push_back(sub);}combinedMesh.materials.insert(combinedMesh.materials.end(),room.materials.begin(),room.materials.end());}
+        }
+        else combinedMesh = rayScene?CreateRayQueryScene():aoMotionScene ? CreateAoMotionScene() : GLTFLoader::Load(scenePath);
     } else {
     MeshData maryMesh = OBJLoader::Load(
         "assets/models/mary/Marry.obj"
@@ -539,6 +552,9 @@ m_GraphicsPipeline =
         m_CameraDistance = std::max(8.0f, std::ceil(std::sqrt(float(stressCount))) * 0.8f);
     }
     if (occlusionScene) m_CameraDistance=8.0f;
+    if(aoMotionScene){m_CameraTarget={0,.35f,0};m_CameraDistance=4.f;}
+    if(m_AnimationRig){m_CameraTarget={0,1.2f,0};m_CameraDistance=4.5f;}
+    if(m_Reflections){m_CameraTarget={0,m_AnimationRig?.55f:1.1f,0};m_CameraDistance=m_AnimationRig?7.5f:6.f;}
     m_DefaultCameraDistance = m_CameraDistance;
     std::cout
         << "[Scene] Combined vertices: "
@@ -1041,8 +1057,7 @@ m_GraphicsPipeline =
     // =========================================================
 
     const VkDeviceSize vertexBufferSize =
-        sizeof(Vertex) *
-        combinedMesh.vertices.size();
+        m_AnimationRig ? GpuSkinning::BufferBytes(combinedMesh.vertices.size()) : sizeof(Vertex) * combinedMesh.vertices.size();
 
     std::cout
         << "[Context] Creating vertex buffer..."
@@ -1052,16 +1067,18 @@ m_GraphicsPipeline =
         *m_PhysicalDevice,
         *m_LogicalDevice,
         vertexBufferSize,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     );
 
     m_VertexBuffer->UploadData(
         combinedMesh.vertices.data(),
-        vertexBufferSize
+        sizeof(Vertex)*combinedMesh.vertices.size()
     );
 
+    if(m_AnimationRig)m_Skinning=std::make_unique<GpuSkinning>(*m_PhysicalDevice,*m_LogicalDevice,*m_AnimationRig,combinedMesh,*m_VertexBuffer,verifyPrepass,characterPlacement);
+    if(m_Reflections)m_Reflections->Build(combinedMesh,verifyRay,m_Skinning?m_VertexBuffer.get():nullptr);
     std::cout
         << "[Context] Vertex buffer uploaded."
         << std::endl;
@@ -1162,14 +1179,18 @@ m_GraphicsPipeline =
         << "[Context] Creating descriptor manager..."
         << std::endl;
 
+    std::map<std::tuple<int,bool,bool>,const TextureImage*> imageCache;
     std::vector<std::array<const TextureImage*, 5>> materialTextures;
     for (const auto& material : combinedMesh.materials) {
         std::array<const TextureImage*, 5> bindings{};
         for (size_t slot = 0; slot < 5; ++slot) {
             if (material.textures[slot] >= 0) {
+                auto key=std::make_tuple(material.textures[slot],slot==0||slot==4,material.mipmapped);
+                if(auto found=imageCache.find(key);found!=imageCache.end()){bindings[slot]=found->second;continue;}
                 auto texture = std::make_unique<TextureImage>(*m_PhysicalDevice, *m_LogicalDevice,
-                    combinedMesh.images.at(material.textures[slot]), slot == 0 || slot == 4);
+                    combinedMesh.images.at(material.textures[slot]), slot == 0 || slot == 4,material.mipmapped);
                 bindings[slot] = texture.get();
+                imageCache[key]=texture.get();
                 m_MaterialImages.push_back(std::move(texture));
             } else bindings[slot] = m_TextureImage.get();
         }
@@ -1189,7 +1210,7 @@ m_GraphicsPipeline =
     if (combinedMesh.instances.size() > 1)
         m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling,m_HiZ.get(),
             VkDescriptorImageInfo{m_BRDFLUT->GetSampler(),m_BRDFLUT->GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-    m_ScenePrepass=std::make_unique<ScenePrepass>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_UniformBuffer,*m_InstanceBuffer,combinedMesh.subMeshes,verifyPrepass);
+    m_ScenePrepass=std::make_unique<ScenePrepass>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_UniformBuffer,*m_InstanceBuffer,combinedMesh.subMeshes,verifyPrepass,halfAo,m_Skinning?m_VertexBuffer.get():nullptr,m_Skinning?m_Skinning->PreviousOffset():0,m_Skinning.get());
     if (m_HiZ) m_HiZInspector=std::make_unique<HiZInspector>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_HiZ,*m_GpuCulling,combinedMesh);
     if(m_GpuCulling) {
         const auto& layout=m_GpuCulling->Layout();
@@ -1235,6 +1256,10 @@ m_GraphicsPipeline =
         << "[Context] Creating command manager..."
         << std::endl;
 
+    if(m_AnimationRig){
+        for(const auto& clip:m_AnimationRig->clips)m_AnimationControls.clips.push_back({clip.name,clip.end-clip.start});
+        m_AnimationPanel=std::make_unique<AnimationPanel>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent());
+    }
     m_CommandManager =
         std::make_unique<CommandManager>(
             *m_LogicalDevice,
@@ -1252,7 +1277,7 @@ m_GraphicsPipeline =
             *m_DescriptorManager,
             combinedMesh.subMeshes,
             combinedMesh.materials,
-            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle()
+            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle(),m_Skinning.get(),m_AnimationPanel.get(),m_Reflections.get()
         );
 
     std::cout
@@ -1300,13 +1325,15 @@ void VulkanContext::SetupCameraControls()
                     glfwGetWindowUserPointer(window)
                     );
 
-            if (context == nullptr)
+            if (context == nullptr || context->m_AoTimingActive)
             {
                 return;
             }
 
             if (button == GLFW_MOUSE_BUTTON_LEFT)
             {
+                double x,y;glfwGetCursorPos(window,&x,&y);
+                if(context->AnimationPointer(x,y,action)){context->m_IsDragging=false;return;}
                 if (action == GLFW_PRESS)
                 {
                     context->m_IsDragging = true;
@@ -1325,6 +1352,10 @@ void VulkanContext::SetupCameraControls()
         }
     );
 
+    glfwSetWindowFocusCallback(glfwWindow,[](GLFWwindow* window,int focused){
+        if(!focused){auto* context=static_cast<VulkanContext*>(glfwGetWindowUserPointer(window));if(context){context->m_IsDragging=false;context->m_AnimationControls.scrubbing=false;}}
+    });
+
     glfwSetCursorPosCallback(
         glfwWindow,
         [](GLFWwindow* window, double mouseX, double mouseY)
@@ -1334,7 +1365,8 @@ void VulkanContext::SetupCameraControls()
                     glfwGetWindowUserPointer(window)
                     );
 
-            if (context == nullptr ||
+            if(context && context->m_AnimationControls.scrubbing){context->AnimationPointer(mouseX,mouseY,GLFW_REPEAT);return;}
+            if (context == nullptr || context->m_AoTimingActive ||
                 !context->m_IsDragging)
             {
                 return;
@@ -1377,11 +1409,12 @@ void VulkanContext::SetupCameraControls()
                     glfwGetWindowUserPointer(window)
                     );
 
-            if (context == nullptr)
+            if (context == nullptr || context->m_AoTimingActive)
             {
                 return;
             }
 
+            if(context->m_AnimationRig){double x,y;glfwGetCursorPos(window,&x,&y);int w,h;glfwGetWindowSize(window,&w,&h);float s=AnimationPanel::Scale(w,h);if(context->m_AnimationControls.Contains(float((x-12)/s),float((y-12)/s)))return;}
             context->m_CameraDistance -=
                 static_cast<float>(yOffset) *
                 0.25f;
@@ -1407,14 +1440,35 @@ void VulkanContext::SetupCameraControls()
                     glfwGetWindowUserPointer(window)
                     );
 
-            if (context == nullptr)
+            if (context == nullptr || context->m_AoTimingActive)
             {
                 return;
             }
 
+            if(context->m_AnimationRig && action==GLFW_PRESS){
+                auto& c=context->m_AnimationControls;
+                if(key==GLFW_KEY_F12){c.visible=!c.visible;c.scrubbing=false;return;}
+                if(key==GLFW_KEY_ENTER){c.Activate(AnimationControls::Play);return;}
+                if(key==GLFW_KEY_COMMA){c.Activate(AnimationControls::Previous);return;}
+                if(key==GLFW_KEY_PERIOD){c.Activate(AnimationControls::Next);return;}
+                if(key==GLFW_KEY_HOME){c.Activate(AnimationControls::Restart);return;}
+                if(key==GLFW_KEY_LEFT || key==GLFW_KEY_RIGHT){c.Seek(c.time+(key==GLFW_KEY_LEFT?-1.:1.)/30.);return;}
+                if(key==GLFW_KEY_MINUS){c.Activate(AnimationControls::Slower);return;}
+                if(key==GLFW_KEY_EQUAL){c.Activate(AnimationControls::Faster);return;}
+            }
             if (action == GLFW_PRESS) {
+                if(context->m_Reflections && key==GLFW_KEY_F11){context->m_Reflections->SetEnabled(!context->m_Reflections->Enabled());return;}
+                if(context->m_Reflections && key==GLFW_KEY_F10){context->m_Reflections->SetDebug((context->m_Reflections->Debug()+1)%3);return;}
+                if(key==GLFW_KEY_G && context->m_ScenePrepass){context->SetAoHistoryView((context->m_ScenePrepass->TemporalDebug()+1)%3);context->ConfigurePrepass(6,context->m_ScenePrepass->DepthRange());}
+                if(key==GLFW_KEY_J && context->m_ScenePrepass) context->SetVaryingAoSampling(!context->m_ScenePrepass->VaryingSampling());
+                if(key==GLFW_KEY_T && context->m_ScenePrepass) context->SetTemporalAo(!context->m_ScenePrepass->TemporalEnabled());
+                if(key==GLFW_KEY_F1) context->SetHalfAo(!context->HalfAo());
+                if(key==GLFW_KEY_F2 && context->m_ScenePrepass) {
+                    const auto ao=context->m_ScenePrepass->AoSettings();
+                    context->ConfigureAo(ao.x,ao.y,int(ao.z),!context->m_ScenePrepass->PlaneAwareBlur());
+                }
                 if(key==GLFW_KEY_F3 && context->m_ScenePrepass) context->ConfigurePrepass(context->m_ScenePrepass->Mode()==7?0:7,context->m_ScenePrepass->DepthRange());
-                if(key==GLFW_KEY_F4 && context->m_ScenePrepass) context->ConfigurePrepass(context->m_ScenePrepass->Mode()==3?5:context->m_ScenePrepass->Mode()==7?0:context->m_ScenePrepass->Mode()+1,context->m_ScenePrepass->DepthRange());
+                if(key==GLFW_KEY_F4 && context->m_ScenePrepass) context->ConfigurePrepass(context->m_ScenePrepass->Mode()==3?5:context->m_ScenePrepass->Mode()==8?0:context->m_ScenePrepass->Mode()+1,context->m_ScenePrepass->DepthRange());
                 if (context->m_HiZInspector) {
                     auto& inspector=*context->m_HiZInspector;
                     if(key==GLFW_KEY_F10) {
@@ -1572,6 +1626,7 @@ void VulkanContext::SetupCameraControls()
 
             else if (key == GLFW_KEY_R)
             {
+                context->ResetMotionHistory();
                 context->m_CameraYaw = 0.0f;
                 context->m_CameraPitch = 0.15f;
                 context->m_CameraDistance = context->m_DefaultCameraDistance;
@@ -1722,9 +1777,11 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         << " | " << LightingViewName(m_LightingView)
         << " | IBL " << (m_EnableEnvironmentLighting ? "ON" : "OFF");
 
+    if(m_AnimationRig)title<<" | Animation "<<m_AnimationRig->clips[m_AnimationClip].name<<" "<<(m_AnimationControls.playing?"PLAY":"PAUSE")<<" "<<m_AnimationControls.time<<"s "<<m_AnimationControls.speed<<"x [Enter/F12]";
     if (m_GpuCulling) title << " | Cull " << (m_CullingEnabled ? "ON " : "OFF ")
         << m_GpuCulling->VisibleCount() << "/" << m_GpuCulling->TotalCount();
     if(m_ScenePrepass && m_ScenePrepass->Enabled()) title << " | Prepass " << m_ScenePrepass->Mode() << " [F4]";
+    if(m_ScenePrepass && m_ScenePrepass->AoEnabled()) title << " | AO blur " << (m_ScenePrepass->PlaneAwareBlur()?"PLANE":"DEPTH") << " [F2]" << (m_HalfAo?" HALF":" FULL") << " [F1]" << " | Temporal " << (m_ScenePrepass->TemporalEnabled()?"ON":"OFF") << " [T]" << " | Sampling " << (m_ScenePrepass->VaryingSampling()?"VARYING":"FIXED") << " [J]" << " | History view " << m_ScenePrepass->TemporalDebug() << " [G]" << " | Response " << (m_ScenePrepass->AdaptiveAo()?"ADAPTIVE":"FIXED");
     if(m_GpuCulling && m_GpuCulling->Layout().batches.size()>1) {
         const auto& layout=m_GpuCulling->Layout();const auto& counts=m_GpuCulling->BatchStatistics();
         for(size_t g=0;g<counts.size();++g) title << " | " << layout.names[g] << ' ' << counts[g].visible << '/' << layout.batches[g].instances.y;
@@ -1736,6 +1793,7 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         title << "HiZ Inspector | " << m_HiZInspector->Status() << " | " << (m_CullingFrozen?"FROZEN":"LIVE");
         std::cout << "[HiZ Inspector] " << m_HiZInspector->Status() << std::endl;
     }
+    if(m_Reflections)title<<" | Ray reflections "<<(m_Reflections->Enabled()?"ON":"OFF")<<" [F11] view="<<m_Reflections->Debug()<<" [F10]";
     glfwSetWindowTitle(
         m_Window.GetHandle(),
         title.str().c_str()
@@ -2972,12 +3030,14 @@ VulkanContext::~VulkanContext()
     if (m_LogicalDevice) vkDeviceWaitIdle(m_LogicalDevice->GetHandle());
     m_Renderer.reset();
     m_CommandManager.reset();
+    m_AnimationPanel.reset();
     m_DescriptorManager.reset();
     m_MaterialImages.clear();
 
     m_ShadowPipeline.reset();
     m_SkyboxPipeline.reset();
     m_GraphicsPipeline.reset();
+    m_Reflections.reset();
 
     m_DescriptorSetLayout.reset();
 
@@ -3015,6 +3075,8 @@ VulkanContext::~VulkanContext()
     m_InstanceBuffer.reset();
     m_UniformBuffer.reset();
     m_IndexBuffer.reset();
+    m_Skinning.reset();
+    m_AnimationRig.reset();
     m_VertexBuffer.reset();
 
     m_Framebuffer.reset();
@@ -3445,6 +3507,19 @@ void VulkanContext::CreateShadowSampler()
 void VulkanContext::UpdateUniformBuffer()
 {
     m_Renderer->WaitForFrame();
+    if(m_Skinning)m_Skinning->ReadCompleted();
+    if(m_Reflections){m_Reflections->ReadCompleted(m_Skinning?&m_Skinning->CompletedVertices():nullptr);m_Reflections->Update();}
+    if(m_Skinning){
+        auto& c=m_AnimationControls;
+        if(c.modeDirty || c.discontinuity){
+            m_Skinning->ReadCompleted();m_ScenePrepass->ReadCompleted();
+            if(c.modeDirty){m_Skinning->SetDualQuaternion(c.dual);m_Skinning->SetSurfaceNormals(c.surface);m_CommandManager->Refresh();c.modeDirty=false;}
+            ResetMotionHistory();c.discontinuity=false;
+        }
+        m_AnimationClip=c.clip;m_AnimationTime=float(c.time);
+        m_Skinning->Update(m_AnimationClip,m_AnimationTime,false);
+        int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);m_AnimationPanel->Update(c,w,h);
+    }
     UniformBufferObject ubo{};
 
     // =========================================================
@@ -3490,6 +3565,7 @@ void VulkanContext::UpdateUniformBuffer()
         glm::vec3(0.0f, 1.0f, 0.0f)
     );
 
+    if(m_Skinning)m_CommandManager->SetDrawOrder(m_Skinning->DrawOrder(ubo.view));
     ubo.cameraPosition =
         glm::vec4(
             cameraPosition,
@@ -3695,6 +3771,8 @@ void VulkanContext::ToggleSkybox()
 void VulkanContext::DrawFrame()
 {
     if(!m_Renderer->DrawFrame()) return;
+    if(m_Skinning)m_Skinning->MarkSubmitted();
+    if(m_Reflections)m_Reflections->MarkSubmitted();
     if(m_ScenePrepass) m_ScenePrepass->MarkSubmitted();
     if (m_GpuCulling && !m_BenchmarkDirect) m_GpuCulling->MarkSubmitted();
     if (m_HiZInspector) m_HiZInspector->MarkSubmitted();
@@ -3720,7 +3798,10 @@ void VulkanContext::ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, 
 void VulkanContext::SetCulling(bool enabled, bool verify) { m_CullingEnabled=enabled; m_VerifyCulling=verify; }
 void VulkanContext::FinishDiagnostics() {
     m_Renderer->WaitForFrame();
+    if(m_Skinning)m_Skinning->ReadCompleted();
+    if(m_Reflections)m_Reflections->ReadCompleted(m_Skinning?&m_Skinning->CompletedVertices():nullptr);
     if(m_ScenePrepass) m_ScenePrepass->ReadCompleted();
+    m_Renderer->FinishAoTiming();
     if (m_GpuCulling) {
         m_GpuCulling->ReadCompleted();
         std::cout << "[GPU Culling] Visible: " << m_GpuCulling->VisibleCount() << " / " << m_GpuCulling->TotalCount()
@@ -3763,9 +3844,10 @@ void VulkanContext::ConfigureHiZInspector(bool enabled,int instance,int mip,int 
     std::cout << "[HiZ Inspector] ON: F10 toggle, PgUp/PgDn preview mip, Tab instance, F11 group" << std::endl;
 }
 
-void VulkanContext::ConfigureAo(float radius,float bias,int samples) {
+void VulkanContext::ConfigureAo(float radius,float bias,int samples,bool planeAware) {
     m_ScenePrepass->SetAo(radius,bias,samples);
-    std::cout << "[SSAO] radius " << radius << " bias " << bias << " samples " << samples << std::endl;
+    m_ScenePrepass->SetPlaneAwareBlur(planeAware);
+    std::cout << "[SSAO] radius " << radius << " bias " << bias << " samples " << samples << " blur " << (planeAware?"plane":"depth") << std::endl;
 }
 void VulkanContext::ConfigurePrepass(int mode,float range) {
     // Updating descriptors invalidates recorded command buffers; SetPrepassEnabled re-records
@@ -3775,12 +3857,12 @@ void VulkanContext::ConfigurePrepass(int mode,float range) {
         m_DescriptorManager->SetAoImage(mode==7?m_ScenePrepass->BlurredView():VK_NULL_HANDLE,m_ScenePrepass->Sampler());
     }
     m_ScenePrepass->SetMode(mode);m_ScenePrepass->SetDepthRange(range);
-    m_CommandManager->SetPrepassEnabled(m_ScenePrepass->Enabled(),mode>=5,mode);
-    static const char* names[]={"OFF","VIEW NORMAL","LINEAR DEPTH","WORLD NORMAL","PREPASS + SHADED","RAW SSAO","BLURRED SSAO","SSAO COMPOSITE"};
+    m_CommandManager->SetPrepassEnabled(m_ScenePrepass->Enabled(),m_ScenePrepass->AoEnabled(),mode);
+    static const char* names[]={"OFF","VIEW NORMAL","LINEAR DEPTH","WORLD NORMAL","PREPASS + SHADED","RAW SSAO","BLURRED SSAO","SSAO COMPOSITE","MOTION"};
     std::cout << "[Scene Prepass] " << names[mode] << " | depth display range " << range << std::endl;
 }
 VkExtent2D VulkanContext::Extent() const { return m_Swapchain->GetExtent(); }
-bool VulkanContext::NeedsRebuild() const { return m_Renderer->NeedsRebuild(); }
+bool VulkanContext::NeedsRebuild() const { return m_AoRebuild || m_Renderer->NeedsRebuild(); }
 
 std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
     // Snapshot CPU state only. No Vulkan handle crosses the old device's lifetime.
@@ -3807,14 +3889,88 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
         std::make_pair(&VulkanContext::m_ManualPointLightPosition,m_ManualPointLightPosition),
         std::make_pair(&VulkanContext::m_ManualPointLightControl,m_ManualPointLightControl));
     const auto ao=m_ScenePrepass->AoSettings();
+    const bool planeAware=m_ScenePrepass->PlaneAwareBlur();
+    const bool temporal=m_ScenePrepass->TemporalEnabled();
+    const bool varying=m_ScenePrepass->VaryingSampling();
+    const int historyView=m_ScenePrepass->TemporalDebug();
+    const bool adaptive=m_ScenePrepass->AdaptiveAo();
     const int mode=m_ScenePrepass->Mode();const float range=m_ScenePrepass->DepthRange();
     const bool inspect=m_HiZInspector && m_HiZInspector->Enabled();
     const int group=inspect?m_HiZInspector->Group():0,selection=inspect?m_HiZInspector->Selection():-1,mip=inspect?m_HiZInspector->Mip():0;
-    return [fields,mode,range,inspect,group,selection,mip,ao](VulkanContext& context) {
+    const auto animation=m_AnimationControls;
+    const bool rayEnabled=m_Reflections && m_Reflections->Enabled();const int rayDebug=m_Reflections?m_Reflections->Debug():0;
+    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug](VulkanContext& context) {
         std::apply([&](const auto&... member) { ((context.*(member.first)=member.second),...); },fields);
         context.m_CommandManager->SetSkyboxEnabled(context.m_EnableSkybox);
-        context.ConfigureAo(ao.x,ao.y,int(ao.z));
+        context.ConfigureAo(ao.x,ao.y,int(ao.z),planeAware);
         context.ConfigurePrepass(mode,range);
+        context.SetTemporalAo(temporal);
+        context.SetVaryingAoSampling(varying);
+        context.SetAoHistoryView(historyView);
+        context.SetAdaptiveAo(adaptive);
         context.ConfigureHiZInspector(inspect,selection,mip,group);
+        if(context.m_AnimationRig){context.m_AnimationControls=animation;context.m_AnimationControls.scrubbing=false;context.m_AnimationControls.modeDirty=context.m_AnimationControls.discontinuity=true;}
+        if(context.m_Reflections)context.SetRayReflections(rayEnabled,rayDebug);
     };
+}
+
+void VulkanContext::StartAoTiming(const std::string& path,int warmup,int samples) {
+    const auto& p=m_PhysicalDevice->GetProperties();const auto ao=m_ScenePrepass->AoSettings();
+    std::ostringstream metadata;
+    metadata<<"device="<<p.deviceName<<" driverRaw="<<p.driverVersion<<" width="<<Extent().width<<" height="<<Extent().height
+      <<" adaptive="<<(m_ScenePrepass->AdaptiveAo()?1:0)<<" sampling="<<(m_ScenePrepass->VaryingSampling()?"varying":"fixed")<<" temporal="<<(m_ScenePrepass->TemporalEnabled()?1:0)<<" motionOutput=1 scale="<<(m_HalfAo?"half":"full")<<" samples="<<int(ao.z)<<" radius="<<ao.x<<" bias="<<ao.y
+      <<" guidance="<<(m_ScenePrepass->PlaneAwareBlur()?"plane":"depth")<<" shadow="<<m_ShadowMode
+      <<" yaw="<<m_CameraYaw<<" pitch="<<m_CameraPitch<<" distance="<<m_CameraDistance;
+    m_Renderer->StartAoTiming(path,warmup,samples,metadata.str());m_AoTimingActive=true;
+}
+
+void VulkanContext::SetVaryingAoSampling(bool enabled){if(m_ScenePrepass)m_ScenePrepass->SetVaryingSampling(enabled);}
+void VulkanContext::SetTemporalAo(bool enabled){if(m_ScenePrepass)m_ScenePrepass->SetTemporalAo(enabled);}
+void VulkanContext::ResetMotionHistory(){if(m_ScenePrepass)m_ScenePrepass->ResetMotionHistory();}
+void VulkanContext::SetMotionTestOffset(float offset){
+    m_Renderer->WaitForFrame();InstanceData instance;
+    m_InstanceBuffer->DownloadData(&instance,sizeof(instance));
+    if(!m_MotionTestInitialized){m_MotionTestBase=instance.model;m_MotionTestInitialized=true;}
+    instance.model=glm::translate(glm::mat4(1),glm::vec3(offset,0,0))*m_MotionTestBase;
+    m_InstanceBuffer->UploadData(&instance,sizeof(instance));
+}
+
+void VulkanContext::SetAoBoxOffset(float offset){
+    if(m_InstanceBuffer->GetSize()!=2*sizeof(InstanceData))throw std::runtime_error("AO box scene requires exactly two instances");
+    m_Renderer->WaitForFrame();
+    InstanceData instances[2];m_InstanceBuffer->DownloadData(instances,sizeof(instances));
+    instances[1].model=glm::translate(glm::mat4(1),glm::vec3(offset,0,0));
+    m_InstanceBuffer->UploadData(instances,sizeof(instances));
+}
+
+void VulkanContext::SetAoHistoryView(int mode){if(mode<0||mode>2)throw std::runtime_error("Invalid AO history view");m_ScenePrepass->SetTemporalDebug(mode);}
+
+void VulkanContext::SetAdaptiveAo(bool enabled){m_ScenePrepass->SetAdaptiveAo(enabled);}
+
+void VulkanContext::SetAnimationClip(const std::string& name){
+    if(!m_AnimationRig)throw std::runtime_error("No animated scene loaded");
+    for(size_t i=0;i<m_AnimationRig->clips.size();++i)if(m_AnimationRig->clips[i].name==name){m_AnimationControls.Select(i);m_AnimationClip=i;return;}
+    throw std::runtime_error("Animation clip not found: "+name);
+}
+void VulkanContext::SetDualQuaternionSkinning(bool enabled){
+    if(!m_Skinning)throw std::runtime_error("No animated scene loaded");
+    m_AnimationControls.Activate(enabled?AnimationControls::Dual:AnimationControls::Linear);
+}
+void VulkanContext::SetSurfaceSkinningNormals(bool enabled){
+    if(!m_Skinning)throw std::runtime_error("No animated scene loaded");
+    m_AnimationControls.Activate(enabled?AnimationControls::Surface:AnimationControls::Authored);
+}
+void VulkanContext::SetRayReflections(bool enabled,int debug){
+    if(!m_Reflections)throw std::runtime_error("No Ray Query scene loaded");
+    if(debug<0||debug>2)throw std::runtime_error("Ray view must be 0..2");
+    m_Reflections->SetEnabled(enabled);m_Reflections->SetDebug(debug);
+}
+bool VulkanContext::AnimationPointer(double x,double y,int action){
+    if(!m_AnimationPanel)return false;
+    auto& c=m_AnimationControls;
+    if(action==GLFW_RELEASE){bool consumed=c.scrubbing;c.scrubbing=false;return consumed;}
+    int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);float s=AnimationPanel::Scale(w,h);
+    float px=float((x-12)/s),py=float((y-12)/s);
+    if(action==GLFW_REPEAT)return c.Drag(px);
+    return c.Press(px,py);
 }

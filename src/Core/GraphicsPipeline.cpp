@@ -12,12 +12,12 @@ GraphicsPipeline::GraphicsPipeline(
     const LogicalDevice& logicalDevice,
     const RenderPass& renderPass,
     const Swapchain& swapchain,
-    VkDescriptorSetLayout descriptorSetLayout
+    VkDescriptorSetLayout descriptorSetLayout, VkDescriptorSetLayout rayLayout
 )
     : m_LogicalDevice(logicalDevice),
     m_RenderPass(renderPass),
     m_Swapchain(swapchain),
-    m_DescriptorSetLayout(descriptorSetLayout)
+    m_DescriptorSetLayout(descriptorSetLayout),m_RayLayout(rayLayout)
 {
     if (m_DescriptorSetLayout == VK_NULL_HANDLE)
     {
@@ -38,6 +38,7 @@ GraphicsPipeline::~GraphicsPipeline()
     VkDevice device =
         m_LogicalDevice.GetHandle();
 
+    for(auto pipeline:m_Variants)if(pipeline)vkDestroyPipeline(device,pipeline,nullptr);
     if (m_GraphicsPipeline != VK_NULL_HANDLE)
     {
         vkDestroyPipeline(
@@ -90,7 +91,7 @@ void GraphicsPipeline::CreateGraphicsPipeline()
     auto vertShaderCode = ReadFile("build/shaders/triangle.vert.spv");
 
     std::cout << "[Pipeline] Loading fragment shader..." << std::endl;
-    auto fragShaderCode = ReadFile("build/shaders/triangle.frag.spv");
+    auto fragShaderCode = ReadFile(m_RayLayout?"build/shaders/triangle_ray.frag.spv":"build/shaders/triangle.frag.spv");
 
     std::cout << "[Pipeline] Creating vertex shader module..." << std::endl;
     VkShaderModule vertShaderModule = CreateShaderModule(vertShaderCode);
@@ -197,8 +198,9 @@ void GraphicsPipeline::CreateGraphicsPipeline()
     pipelineLayoutInfo.sType =
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &m_DescriptorSetLayout;
+    VkDescriptorSetLayout layouts[]={m_DescriptorSetLayout,m_RayLayout};
+    pipelineLayoutInfo.setLayoutCount = m_RayLayout?2:1;
+    pipelineLayoutInfo.pSetLayouts = layouts;
 
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges =
@@ -240,6 +242,19 @@ void GraphicsPipeline::CreateGraphicsPipeline()
         &m_GraphicsPipeline) != VK_SUCCESS)
     {
         throw std::runtime_error("Failed to create graphics pipeline.");
+    }
+
+    for(int i=1;i<4;++i){
+        rasterizer.cullMode=(i&1)?VK_CULL_MODE_NONE:VK_CULL_MODE_BACK_BIT;
+        depthStencil.depthWriteEnable=(i&2)?VK_FALSE:VK_TRUE;
+        colorBlendAttachment.blendEnable=(i&2)?VK_TRUE:VK_FALSE;
+        colorBlendAttachment.srcColorBlendFactor=VK_BLEND_FACTOR_SRC_ALPHA;
+        colorBlendAttachment.dstColorBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.colorBlendOp=VK_BLEND_OP_ADD;
+        colorBlendAttachment.srcAlphaBlendFactor=VK_BLEND_FACTOR_ONE;
+        colorBlendAttachment.dstAlphaBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        colorBlendAttachment.alphaBlendOp=VK_BLEND_OP_ADD;
+        if(vkCreateGraphicsPipelines(m_LogicalDevice.GetHandle(),VK_NULL_HANDLE,1,&pipelineInfo,nullptr,&m_Variants[i-1])!=VK_SUCCESS)throw std::runtime_error("Cannot create double-sided/alpha pipeline");
     }
 
     vkDestroyShaderModule(m_LogicalDevice.GetHandle(), fragShaderModule, nullptr);
