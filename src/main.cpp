@@ -126,6 +126,7 @@ int main(int argc, char **argv)
         bool animationControlsTest=false, animationPanel=true;
         bool rayScene=false,verifyRay=false,rayEnabled=true,rayCycle=false;
         int rayView=0;
+        bool mirrorStyles=true;
         float animationFrozen = -1;
         std::string benchmarkPath;
         bool benchmarkCaptures = false;
@@ -294,6 +295,7 @@ int main(int argc, char **argv)
             else if (option == "--ray-query-scene") {rayScene=true;prepassMode=7;}
             else if (option == "--verify-ray-query") {verifyRay=true;verifyPrepass=true;}
             else if (option == "--ray-query-cycle-test") rayCycle=true;
+            else if (option == "--mirror-styles" && i+1<argc){std::string value=argv[++i];if(value!="on" && value!="off")throw std::runtime_error("Mirror styles must be on|off");mirrorStyles=value=="on";}
             else if (option == "--ray-view" && i+1<argc) rayView=std::stoi(argv[++i]);
             else if (option == "--ray-reflections" && i+1<argc) {std::string value=argv[++i];if(value!="on"&&value!="off")throw std::runtime_error("--ray-reflections expects on|off");rayEnabled=value=="on";}
             else if (option == "--animation-controls-test")
@@ -406,7 +408,7 @@ int main(int argc, char **argv)
             else
                 throw std::runtime_error(
                     "Usage: VulkanRenderingLab [--ray-query-scene] [--verify-ray-query] "
-                    "[--ray-reflections on|off] [--ray-view 0..2] [--ray-query-cycle-test] "
+                    "[--ray-reflections on|off] [--mirror-styles on|off] [--ray-view 0..2] [--ray-query-cycle-test] "
                     "[--inspect-animation path.glb] [--animated-scene path.glb] "
                     "[--animation name] [--animation-time seconds] [--skinning linear|dual-quaternion] "
                     "[--skinning-normals surface|transformed] "
@@ -529,7 +531,7 @@ int main(int argc, char **argv)
             auto result = std::make_unique<VulkanContext>(window, scenePath, stressCount, verifyCulling,
                                                           occlusionScene, mixedScene, verifyPrepass, halfAo,
                                                           aoMotionScene, animatedPath,rayScene,verifyRay);
-            if(rayScene)result->SetRayReflections(rayEnabled,rayView);
+            if(rayScene){result->SetRayReflections(rayEnabled,rayView);result->SetMirrorStyles(mirrorStyles);}
             if (!animatedPath.empty())
             {
                 result->SetAnimationClip(animationName);

@@ -1909,8 +1909,8 @@ script checks toggle/debug/camera/resize/resolution paths and main/prepass depth
 Vulkan synchronization validation. Portable tests cover analytic intersections,
 barycentrics, ray intervals and procedural scene winding.
 
-The base sample uses static opaque constant-material geometry and one reflection bounce. A mirror
-encountered inside another reflection uses local IBL shading, not recursive tracing.
+The base sample uses static opaque constant-material geometry. Mirrors encountered
+inside reflections continue through a bounded iterative path (described below).
 An optional animated character path is described below. Stochastic rough-reflection
 sampling, reflection temporal accumulation and denoising are not implemented. Ray Query
 work currently belongs to the Main GPU interval; startup AS construction is separate
@@ -1958,3 +1958,37 @@ skinning vertices (whose deformation has its own CPU reference), then compares 1
 alpha-aware GPU queries with CPU nearest intersections on the current pose. Tests
 cover playback, frozen bent poses, linear/authored modes, live control changes,
 resize, AO-resolution rebuild and reflection toggling with synchronization validation.
+
+### Stylized mirror shading
+
+![PBR source with Toon floor and cool/warm wall reflections](docs/images/stylized-mirrors.png)
+
+The source character retains its PBR raster shading. The floor mirror uses three
+Toon lighting bands with the original base-color atlas and an ink-blue floor for
+near-black fabric; the wall mirror uses a
+cool/warm palette driven by hit-normal lighting and ray-shadow visibility. The
+style belongs to the receiver material, so both mirrors share the same animated
+BLAS/TLAS and alpha-aware intersections. Misses retain the environment fallback.
+
+Press F9 to toggle both receivers between their styles and PBR. F11 still toggles
+ray reflections; F10 still selects ray diagnostics. Window rebuilds retain the
+style toggle. Use `--mirror-styles off` for a reproducible PBR reference capture.
+This is hit-surface stylization with a bounded iterative mirror path: up to three
+traced segments after the primary mirror, with Fresnel attenuation at intermediate
+mirrors. Intermediate mirrors continue the ray instead of receiving opaque shading.
+Each mirror retains its own style. The innermost receiver shades the final
+non-mirror hit, then outer receivers filter the resulting linear radiance in reverse
+path order, preserving the inner palette through the outer Toon brightness bands.
+Fresnel weights are applied between layers; exposure is applied once at the end.
+Direct and nested environment misses share a detail-preserving environment
+filter: Toon blends soft luminance bands with the source image; cool/warm shading
+blends a luminance-normalized palette with the original hue. The style strength is
+shared across the mirror layers to avoid repeatedly flattening clouds and horizons; a mirror at the final segment terminates with zero
+additional radiance. This has no rough multi-bounce transport, outlines, paper
+textures, or physically based energy model for the styles.
+
+```powershell
+.\build\Release\VulkanRenderingLab.exe --ray-query-scene --animated-scene assets/models/character/character.glb --animation Hello --paused
+```
+
+Validate and capture matched PBR/styled poses with `.\tools\verify-mirror-styles.ps1`.

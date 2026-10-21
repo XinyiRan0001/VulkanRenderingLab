@@ -733,24 +733,129 @@ void ProceedMirror(rayQueryEXT query){while(rayQueryProceedEXT(query)){
         if(accept)rayQueryConfirmIntersectionEXT(query);
     }
 }}
+// Outer mirrors filter the inner mirror's linear radiance, not its source albedo.
+vec3 FilterMirrorImage(vec3 radiance,int style){
+    float luminance=dot(radiance,vec3(.2126,.7152,.0722));
+    if(style==0 || luminance<=.00001)return radiance;
+    float tone=luminance/(1.0+luminance);
+    if(style==1){
+        float band=.10+.20*smoothstep(.18,.21,tone)+.32*smoothstep(.40,.43,tone);
+        // Preserve the inner palette while simplifying its brightness.
+        return radiance*(band/max(luminance,.025));
+    }
+    return mix(vec3(.035,.12,.42),vec3(1.35,.55,.10),smoothstep(.08,.55,tone))
+           *(.4+.8*sqrt(luminance));
+}
+// Environment filtering preserves radiance detail instead of flattening it to a palette.
+vec3 FilterMirrorEnvironment(vec3 radiance,int style,float strength){
+    float luminance=dot(radiance,vec3(.2126,.7152,.0722));
+    if(style==0 || luminance<=.00001)return radiance;
+    float tone=luminance/(1.0+luminance);
+    if(style==1){
+        float bands=.1;
+        for(int k=1;k<5;++k){
+            float edge=float(k)*.2;
+            bands+=.2*smoothstep(edge-.025,edge+.025,tone);
+        }
+        // Blend the bands with continuous luminance: cloud and horizon detail survives.
+        float mapped=mix(tone,bands,.55*strength);
+        float target=mapped/max(1.0-mapped,.001);
+        return radiance*(target/luminance);
+    }
+    // A normalized tint keeps source luminance; retain some original environment hue.
+    vec3 tint=mix(vec3(.30,.53,1.20),vec3(1.25,.73,.32),smoothstep(.12,.78,tone));
+    tint/=dot(tint,vec3(.2126,.7152,.0722));
+    return mix(radiance,luminance*tint,.72*strength);
+}
+vec3 ResolveMirrorStyles(vec3 radiance,int styles[3],vec3 weights[3],int count){
+    // The innermost style already shaded the final surface. Walk back outwards.
+    for(int i=count-1;i>=0;--i){
+        radiance*=weights[i];
+        if(i>0)radiance=FilterMirrorImage(radiance,styles[i-1]);
+    }
+    return radiance;
+}
 vec3 TraceMirror(vec3 p,vec3 n,vec3 viewDirection,out bool hit,out float distance){
     vec3 direction=normalize(reflect(-viewDirection,n));vec3 origin=p+n*ray.settings.z;
-    rayQueryEXT query;rayQueryInitializeEXT(query,rayScene,0,255,origin,ray.settings.z,direction,ray.settings.w);ProceedMirror(query);
-    hit=rayQueryGetIntersectionTypeEXT(query,true)==gl_RayQueryCommittedIntersectionTriangleEXT;distance=ray.settings.w;
-    if(!hit)return ubo.shadowSettings.y!=0?textureLod(prefilteredEnvironmentMap,RotateEnvironment(direction),0).rgb:vec3(0);
-    distance=rayQueryGetIntersectionTEXT(query,true);uint id=rayQueryGetIntersectionPrimitiveIndexEXT(query,true);vec2 bary=rayQueryGetIntersectionBarycentricsEXT(query,true);RayTriangle triangle=rayTriangles[id];
-    vec3 normal=normalize(triangle.na.xyz*(1-bary.x-bary.y)+triangle.nb.xyz*bary.x+triangle.nc.xyz*bary.y);if(dot(normal,direction)>0)normal=-normal;
-    vec3 position=origin+direction*distance,lightOffset=ubo.pointLight.position.xyz-position;float lightDistance=length(lightOffset);vec3 lightDirection=lightOffset/max(lightDistance,.0001);
+    // Iterative path: the primary receiver already supplied the first reflection.
+    // Up to three traced segments, including at most two further mirror hits.
+    vec3 normal=vec3(0),position=vec3(0);
+    int styles[3];vec3 weights[3];int count=1;
+    styles[0]=ray.settings.x>1.5?int(material.properties.w+.5)-1:0;
+    weights[0]=vec3(1);
+    RayTriangle triangle;vec2 bary=vec2(0);
+    hit=false;distance=ray.settings.w;
+    for(int segment=0;segment<3;++segment){
+        rayQueryEXT query;
+        rayQueryInitializeEXT(query,rayScene,0,255,origin,ray.settings.z,direction,ray.settings.w);
+        ProceedMirror(query);
+        bool found=rayQueryGetIntersectionTypeEXT(query,true)==gl_RayQueryCommittedIntersectionTriangleEXT;
+        if(segment==0){hit=found;if(found)distance=rayQueryGetIntersectionTEXT(query,true);}
+        if(!found){
+            vec3 environment=ubo.shadowSettings.y!=0?
+                textureLod(prefilteredEnvironmentMap,RotateEnvironment(direction),0).rgb:vec3(0);
+            // Same environment filter for direct and nested paths. Share the artistic
+            // strength across layers so repeated reflections do not erase image detail.
+            float strength=.85/float(count);
+            for(int layer=count-1;layer>=0;--layer){
+                environment=FilterMirrorEnvironment(environment,styles[layer],strength);
+                environment*=weights[layer];
+            }
+            return environment;
+        }
+        float segmentDistance=rayQueryGetIntersectionTEXT(query,true);
+        triangle=rayTriangles[rayQueryGetIntersectionPrimitiveIndexEXT(query,true)];
+        bary=rayQueryGetIntersectionBarycentricsEXT(query,true);
+        normal=normalize(triangle.na.xyz*(1-bary.x-bary.y)+triangle.nb.xyz*bary.x+triangle.nc.xyz*bary.y);
+        if(dot(normal,direction)>0)normal=-normal;
+        position=origin+direction*segmentDistance;
+        if(triangle.properties.z<.5)break;
+        // Never shade an intermediate mirror as an opaque painted surface.
+        // The bounded path returns no extra radiance if the budget is exhausted.
+        if(segment==2)return vec3(0);
+        styles[count]=ray.settings.x>1.5?int(triangle.properties.z+.5)-1:0;
+        weights[count]=FresnelSchlick(max(dot(normal,-direction),0.0),
+                                    mix(vec3(.04),triangle.color.rgb,triangle.properties.x));
+        ++count;
+        direction=normalize(reflect(direction,normal));
+        origin=position+normal*ray.settings.z;
+    }
+    vec3 lightOffset=ubo.pointLight.position.xyz-position;
+    float lightDistance=length(lightOffset);vec3 lightDirection=lightOffset/max(lightDistance,.0001);
     float visibility=1;
     if(lightDistance>4*ray.settings.z && dot(normal,lightDirection)>0){rayQueryEXT shadow;rayQueryInitializeEXT(shadow,rayScene,gl_RayFlagsTerminateOnFirstHitEXT,255,position+normal*ray.settings.z,ray.settings.z,lightDirection,lightDistance-2*ray.settings.z);ProceedMirror(shadow);if(rayQueryGetIntersectionTypeEXT(shadow,true)!=gl_RayQueryCommittedIntersectionNoneEXT)visibility=0;}
     float metallic=triangle.properties.x,roughness=triangle.properties.y;vec3 color=triangle.color.rgb;if((int(triangle.properties.w)&1)!=0)color*=textureLod(rayAtlas,RayUv(triangle,bary),0).rgb;
+    // Shade the terminal surface using the innermost receiver, then unwind the path.
+    int style=styles[count-1];
+    if(style==1){
+        float ndl=max(dot(normal,lightDirection),0.0);
+        // A narrow continuous transition softens the lighting-band boundary.
+        float width=.015;
+        float band=.28+.35*smoothstep(.28-width,.28+width,ndl)
+                        +.37*smoothstep(.68-width,.68+width,ndl);
+        band=mix(.22,band,visibility);
+        float luminance=dot(color,vec3(.2126,.7152,.0722));
+        // Preserve the atlas hue, but give near-black fabric an ink-blue floor.
+        // A multiplicative light ramp alone cannot reveal a black base color.
+        float ink=1.0-smoothstep(.015,.16,luminance);
+        vec3 painted=mix(color,vec3(.10,.14,.26),ink);
+        vec3 tint=mix(vec3(.65,.57,.88),vec3(1.04,1.0,.90),band);
+        return ResolveMirrorStyles(painted*(.38+1.05*band)*tint,styles,weights,count);
+    }
+    if(style==2){
+        float facing=dot(normal,lightDirection)*.5+.5;
+        float tone=mix(.12,facing,visibility);
+        vec3 cool=vec3(.035,.12,.42),warm=vec3(1.35,.55,.10);
+        float luminance=dot(color,vec3(.2126,.7152,.0722));
+        return ResolveMirrorStyles(mix(cool,warm,smoothstep(.2,.85,tone))*(.4+.8*sqrt(max(luminance,0.0))),styles,weights,count);
+    }
     vec3 radiance=EvaluateCookTorranceLight(color,normal,-direction,lightDirection,ubo.pointLight.color.rgb*ubo.pointLight.color.a/max(lightDistance*lightDistance,.01),metallic,roughness)*visibility;
     if(ubo.shadowSettings.y!=0){
         float ndv=max(dot(normal,-direction),.001);vec3 fresnel=FresnelSchlickRoughness(ndv,mix(vec3(.04),color,metallic),roughness);vec2 brdf=texture(brdfLUT,vec2(ndv,roughness)).rg;
         radiance+=(1-fresnel)*(1-metallic)*texture(irradianceMap,RotateEnvironment(normal)).rgb*color;
         radiance+=textureLod(prefilteredEnvironmentMap,RotateEnvironment(reflect(direction,normal)),roughness*7).rgb*(fresnel*brdf.x+brdf.y);
     }else radiance+=color*.04*(1-metallic);
-    return radiance;
+    return ResolveMirrorStyles(radiance,styles,weights,count);
 }
 #endif
 void main()

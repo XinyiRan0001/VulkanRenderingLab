@@ -77,6 +77,7 @@ public:
     void AdvanceAnimation(double seconds){if(m_AnimationRig)m_AnimationControls.Advance(seconds);}
     AnimationControls* Playback(){return m_AnimationRig?&m_AnimationControls:nullptr;}
     void SetRayReflections(bool enabled,int debug=0);
+    void SetMirrorStyles(bool enabled);
     void ConfigureAo(float radius,float bias,int samples,bool planeAware=true);
     VkExtent2D Extent() const;
     bool NeedsRebuild() const;

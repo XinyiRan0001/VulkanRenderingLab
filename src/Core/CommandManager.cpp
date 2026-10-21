@@ -593,7 +593,7 @@ void CommandManager::RecordCommandBuffers()
                         material.metallic,
                         material.roughness,
                         material.ambientOcclusion,
-                        material.rayMirror?1.0f:0.0f
+                        material.rayMirror?float(1+material.reflectionStyle):0.0f
                     );
             }
             else

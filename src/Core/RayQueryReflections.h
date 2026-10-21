@@ -26,6 +26,8 @@ class RayQueryReflections
     {
         m_Enabled = enabled;
     }
+    void SetStylized(bool value) { m_Stylized=value; }
+    bool Stylized() const { return m_Stylized; }
     bool Enabled() const
     {
         return m_Enabled;
@@ -78,7 +80,7 @@ class RayQueryReflections
     VkAccelerationStructureGeometryKHR Geometry() const;
     VkAccelerationStructureGeometryKHR Instances() const;
     bool Accept(const Triangle &, glm::vec2 bary) const;
-    bool m_Enabled = true;
+    bool m_Enabled = true, m_Stylized = true;
     int m_Debug = 0;
     PFN_vkCreateAccelerationStructureKHR m_Create = nullptr;
     PFN_vkDestroyAccelerationStructureKHR m_Destroy = nullptr;

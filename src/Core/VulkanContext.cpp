@@ -1458,6 +1458,7 @@ void VulkanContext::SetupCameraControls()
             }
             if (action == GLFW_PRESS) {
                 if(context->m_Reflections && key==GLFW_KEY_F11){context->m_Reflections->SetEnabled(!context->m_Reflections->Enabled());return;}
+                if(context->m_Reflections && key==GLFW_KEY_F9){context->m_Reflections->SetStylized(!context->m_Reflections->Stylized());std::cout<<"[Mirror Style] "<<(context->m_Reflections->Stylized()?"per-mirror":"PBR")<<'\n';return;}
                 if(context->m_Reflections && key==GLFW_KEY_F10){context->m_Reflections->SetDebug((context->m_Reflections->Debug()+1)%3);return;}
                 if(key==GLFW_KEY_G && context->m_ScenePrepass){context->SetAoHistoryView((context->m_ScenePrepass->TemporalDebug()+1)%3);context->ConfigurePrepass(6,context->m_ScenePrepass->DepthRange());}
                 if(key==GLFW_KEY_J && context->m_ScenePrepass) context->SetVaryingAoSampling(!context->m_ScenePrepass->VaryingSampling());
@@ -3898,8 +3899,9 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
     const bool inspect=m_HiZInspector && m_HiZInspector->Enabled();
     const int group=inspect?m_HiZInspector->Group():0,selection=inspect?m_HiZInspector->Selection():-1,mip=inspect?m_HiZInspector->Mip():0;
     const auto animation=m_AnimationControls;
+    const bool rayStylized=m_Reflections && m_Reflections->Stylized();
     const bool rayEnabled=m_Reflections && m_Reflections->Enabled();const int rayDebug=m_Reflections?m_Reflections->Debug():0;
-    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug](VulkanContext& context) {
+    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug,rayStylized](VulkanContext& context) {
         std::apply([&](const auto&... member) { ((context.*(member.first)=member.second),...); },fields);
         context.m_CommandManager->SetSkyboxEnabled(context.m_EnableSkybox);
         context.ConfigureAo(ao.x,ao.y,int(ao.z),planeAware);
@@ -3910,7 +3912,7 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
         context.SetAdaptiveAo(adaptive);
         context.ConfigureHiZInspector(inspect,selection,mip,group);
         if(context.m_AnimationRig){context.m_AnimationControls=animation;context.m_AnimationControls.scrubbing=false;context.m_AnimationControls.modeDirty=context.m_AnimationControls.discontinuity=true;}
-        if(context.m_Reflections)context.SetRayReflections(rayEnabled,rayDebug);
+        if(context.m_Reflections){context.SetRayReflections(rayEnabled,rayDebug);context.m_Reflections->SetStylized(rayStylized);}
     };
 }
 
@@ -3974,3 +3976,5 @@ bool VulkanContext::AnimationPointer(double x,double y,int action){
     if(action==GLFW_REPEAT)return c.Drag(px);
     return c.Press(px,py);
 }
+
+void VulkanContext::SetMirrorStyles(bool enabled){if(m_Reflections)m_Reflections->SetStylized(enabled);}

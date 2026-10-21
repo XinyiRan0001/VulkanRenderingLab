@@ -47,6 +47,7 @@ struct MaterialData
     float alpha=1.f;
     bool blend=false, doubleSided=false, mipmapped=false;
     bool rayMirror=false;
+    int reflectionStyle=0; // 0: PBR, 1: Toon, 2: cool/warm.
     float metallic = 0.0f;
     float roughness = 0.5f;
     float ambientOcclusion = 1.0f;
@@ -81,7 +82,7 @@ struct MaterialData
 // properties.x  = metallic
 // properties.y  = roughness
 // properties.z  = ambient occlusion
-// properties.w  = reserved
+// properties.w  = 0 for ordinary surfaces; 1 + reflectionStyle for ray mirrors
 // =========================================================
 
 struct alignas(16) MaterialPushConstants

@@ -97,7 +97,7 @@ void RayQueryReflections::Release()
 }
 void RayQueryReflections::Update()
 {
-    glm::vec4 settings(m_Enabled ? 1.f : 0.f, float(m_Debug), .002f, 100.f);
+    glm::vec4 settings(m_Enabled ? (m_Stylized ? 2.f : 1.f) : 0.f, float(m_Debug), .002f, 100.f);
     m_Settings->UploadData(&settings, sizeof(settings));
 }
 void RayQueryReflections::Submit(const std::function<void(VkCommandBuffer)> &record)
@@ -172,7 +172,7 @@ void RayQueryReflections::Build(const MeshData &mesh, bool verify, const Buffer 
                     continue;
                 tri.color = {material.diffuseColor[0], material.diffuseColor[1], material.diffuseColor[2],
                              material.alpha};
-                tri.properties = {material.metallic, material.roughness, material.rayMirror ? 1.f : 0.f,
+                tri.properties = {material.metallic, material.roughness, material.rayMirror ? float(1 + material.reflectionStyle) : 0.f,
                                   float((material.hasDiffuseTexture ? 1 : 0) | (material.blend ? 2 : 0))};
                 const auto &va = mesh.vertices[mesh.indices[index]];
                 const auto &vb = mesh.vertices[mesh.indices[index + 1]];

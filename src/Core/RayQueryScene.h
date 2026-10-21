@@ -14,9 +14,14 @@ inline MeshData CreateRayQueryScene(bool character = false)
         mesh.materials.push_back(m);
         return int(mesh.materials.size() - 1);
     };
-    int mirror = material({.88f, .9f, .95f}, 1, .03f, true), wall = material({.22f, .25f, .3f}, 0, .85f),
+    int wall = material({.22f, .25f, .3f}, 0, .85f),
         red = material({.65f, .035f, .02f}, 0, .32f), gold = material({.8f, .48f, .12f}, .75f, .18f),
         blue = material({.025f, .35f, .55f}, 0, .24f), pink = material({.7f, .025f, .3f}, 0, .4f);
+    // Separate receiver materials select hit shading without changing the source objects.
+    int toon = material({.88f, .9f, .95f}, 1, .03f, true);
+    mesh.materials[toon].reflectionStyle = 1;
+    int duotone = material({.88f, .9f, .95f}, 1, .03f, true);
+    mesh.materials[duotone].reflectionStyle = 2;
     const auto quad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d, glm::vec3 n, int mat) {
         uint32_t first = uint32_t(mesh.vertices.size()), index = uint32_t(mesh.indices.size());
         for (auto p : {a, b, c, d})
@@ -34,10 +39,10 @@ inline MeshData CreateRayQueryScene(bool character = false)
             mesh.indices.push_back(first + k);
         mesh.subMeshes.push_back({index, 6, mat});
     };
-    quad({-4, 0, -3}, {-4, 0, 5}, {4, 0, 5}, {4, 0, -3}, {0, 1, 0}, mirror);
+    quad({-4, 0, -3}, {-4, 0, 5}, {4, 0, 5}, {4, 0, -3}, {0, 1, 0}, toon);
     quad({-4, 0, -3.05f}, {4, 0, -3.05f}, {4, 4, -3.05f}, {-4, 4, -3.05f}, {0, 0, 1}, wall);
     quad({-4, 0, 5}, {-4, 0, -3.05f}, {-4, 4, -3.05f}, {-4, 4, 5}, {1, 0, 0}, wall);
-    quad({-2.7f, .3f, -3}, {2.7f, .3f, -3}, {2.7f, 3.5f, -3}, {-2.7f, 3.5f, -3}, {0, 0, 1}, mirror);
+    quad({-2.7f, .3f, -3}, {2.7f, .3f, -3}, {2.7f, 3.5f, -3}, {-2.7f, 3.5f, -3}, {0, 0, 1}, duotone);
     const auto sphere = [&](glm::vec3 center, float radius, int mat) {
         uint32_t first = uint32_t(mesh.vertices.size()), index = uint32_t(mesh.indices.size());
         constexpr int rows = 24, cols = 48;
