@@ -40,20 +40,22 @@ RayQueryReflections::RayQueryReflections(const PhysicalDevice &physical, const L
              VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
             {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
              VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-            {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
             {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
             {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
             {7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-             VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+             VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+            {8,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr},
+            {9,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_FRAGMENT_BIT,nullptr}};
         VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        layout.bindingCount = 7;
+        layout.bindingCount = 9;
         layout.pBindings = bindings;
         Check(vkCreateDescriptorSetLayout(d, &layout, nullptr, &m_Layout));
         VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4},
                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
-                                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
+                                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3}};
         VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pool.maxSets = 1;
         pool.poolSizeCount = 4;
@@ -64,7 +66,7 @@ RayQueryReflections::RayQueryReflections(const PhysicalDevice &physical, const L
         allocation.descriptorSetCount = 1;
         allocation.pSetLayouts = &m_Layout;
         Check(vkAllocateDescriptorSets(d, &allocation, &m_Set));
-        m_Settings = std::make_unique<Buffer>(physical, device, 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        m_Settings = std::make_unique<Buffer>(physical, device, 32, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         Update();
@@ -97,7 +99,7 @@ void RayQueryReflections::Release()
 }
 void RayQueryReflections::Update()
 {
-    glm::vec4 settings(m_Enabled ? (m_Stylized ? 2.f : 1.f) : 0.f, float(m_Debug), .002f, 100.f);
+    glm::vec4 settings[2]={{m_Enabled ? (m_Stylized ? 2.f : 1.f) : 0.f, float(m_Debug), .002f, 100.f},{m_HasFilter?1.f:0.f,m_Filtered?1.f:0.f,0,0}};
     m_Settings->UploadData(&settings, sizeof(settings));
 }
 void RayQueryReflections::Submit(const std::function<void(VkCommandBuffer)> &record)
@@ -297,7 +299,7 @@ void RayQueryReflections::Build(const MeshData &mesh, bool verify, const Buffer 
     as.accelerationStructureCount = 1;
     as.pAccelerationStructures = &m_Tlas;
     VkDescriptorBufferInfo buffers[] = {{m_Triangles->GetHandle(), 0, m_Triangles->GetSize()},
-                                        {m_Settings->GetHandle(), 0, 16},
+                                        {m_Settings->GetHandle(), 0, 32},
                                         {m_Checks->GetHandle(), 0, m_Checks->GetSize()}};
     VkWriteDescriptorSet writes[4]{};
     for (int i = 0; i < 4; ++i)
@@ -339,6 +341,9 @@ void RayQueryReflections::Build(const MeshData &mesh, bool verify, const Buffer 
             extra[i].pBufferInfo = i == 0 ? &source : &metadata;
     }
     vkUpdateDescriptorSets(d, 3, extra, 0, nullptr);
+    // Valid fallbacks for non-rough scenes; never sampled unless filtering is configured.
+    SetFilterImages(m_Atlas->GetImageView(),m_Atlas->GetImageView(),m_Atlas->GetSampler());
+    m_HasFilter=false;
     if (m_Dynamic)
     {
         VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, 4};
@@ -633,4 +638,13 @@ void RayQueryReflections::Verify()
             vkDestroyPipelineLayout(d, layout, nullptr);
         throw;
     }
+}
+
+void RayQueryReflections::SetFilterImages(VkImageView raw,VkImageView filtered,VkSampler sampler){
+    VkDescriptorImageInfo images[2]={{sampler,raw,VK_IMAGE_LAYOUT_GENERAL},{sampler,filtered,VK_IMAGE_LAYOUT_GENERAL}};
+    if(raw==m_Atlas->GetImageView())for(auto& image:images)image.imageLayout=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet writes[2]{};
+    for(int i=0;i<2;++i){writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;writes[i].dstSet=m_Set;writes[i].dstBinding=8+i;writes[i].descriptorCount=1;writes[i].descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;writes[i].pImageInfo=&images[i];}
+    vkUpdateDescriptorSets(m_Device.GetHandle(),2,writes,0,nullptr);
+    m_HasFilter=true;
 }

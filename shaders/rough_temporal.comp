@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform sampler2D currentTexture;
+layout(binding=1) uniform sampler2D historyTexture;
+layout(binding=2,rgba32f) uniform writeonly image2D accumulatedImage;
+layout(binding=3) uniform Camera{mat4 inverseProjection;mat4 inverseView;ivec4 size;ivec4 sequence;} camera;
+void main(){
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(pixel,camera.size.xy)))return;
+    vec4 current=texelFetch(currentTexture,pixel,0),result=current;
+    // Static-only: CPU scene/camera signature must validate the whole history.
+    // Keep sharp/invalid pixels exact, and never average roughness/diagnostic tags.
+    if(camera.sequence.y!=0 && camera.sequence.z>0 && abs(current.a)>.1){
+        vec4 previous=texelFetch(historyTexture,pixel,0);
+        if(abs(abs(previous.a)-abs(current.a))<.001)
+            result.rgb=mix(previous.rgb,current.rgb,1.0/float(camera.sequence.z+1));
+    }
+    imageStore(accumulatedImage,pixel,result);
+}

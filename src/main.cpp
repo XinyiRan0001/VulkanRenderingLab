@@ -126,7 +126,10 @@ int main(int argc, char **argv)
         bool animationControlsTest=false, animationPanel=true;
         bool rayScene=false,verifyRay=false,rayEnabled=true,rayCycle=false;
         int rayView=0;
-        bool mirrorStyles=true;
+        bool mirrorStyles=true, roughRayScene=false, reflectionDenoise=true, reflectionHitGuidance=true;
+        int reflectionSamples=8;
+        bool reflectionReference=false, reflectionFurnace=false, reflectionTemporal=false, reflectionTemporalCycle=false;
+        std::string reflectionDump;
         float animationFrozen = -1;
         std::string benchmarkPath;
         bool benchmarkCaptures = false;
@@ -292,6 +295,15 @@ int main(int argc, char **argv)
             }
             else if (option == "--animation" && i + 1 < argc)
                 animationName = argv[++i];
+            else if (option == "--reflection-temporal-cycle-test")reflectionTemporalCycle=true;
+            else if (option == "--reflection-temporal" && i+1<argc){std::string value=argv[++i];if(value!="on" && value!="off")throw std::runtime_error("Reflection temporal must be on|off");reflectionTemporal=value=="on";}
+            else if (option == "--reflection-furnace")reflectionFurnace=true;
+            else if (option == "--reflection-samples" && i+1<argc)reflectionSamples=std::stoi(argv[++i]);
+            else if (option == "--reflection-reference")reflectionReference=true;
+            else if (option == "--reflection-dump" && i+1<argc)reflectionDump=argv[++i];
+            else if (option == "--reflection-hit-guidance" && i+1<argc){std::string value=argv[++i];if(value!="on" && value!="off")throw std::runtime_error("Reflection hit guidance must be on|off");reflectionHitGuidance=value=="on";}
+            else if (option == "--reflection-denoise" && i+1<argc){std::string value=argv[++i];if(value!="on" && value!="off")throw std::runtime_error("Reflection denoise must be on|off");reflectionDenoise=value=="on";}
+            else if (option == "--rough-reflection-scene") {roughRayScene=true;rayScene=true;prepassMode=7;}
             else if (option == "--ray-query-scene") {rayScene=true;prepassMode=7;}
             else if (option == "--verify-ray-query") {verifyRay=true;verifyPrepass=true;}
             else if (option == "--ray-query-cycle-test") rayCycle=true;
@@ -407,8 +419,8 @@ int main(int argc, char **argv)
             }
             else
                 throw std::runtime_error(
-                    "Usage: VulkanRenderingLab [--ray-query-scene] [--verify-ray-query] "
-                    "[--ray-reflections on|off] [--mirror-styles on|off] [--ray-view 0..2] [--ray-query-cycle-test] "
+                    "Usage: VulkanRenderingLab [--ray-query-scene | --rough-reflection-scene] [--verify-ray-query] "
+                    "[--reflection-samples 1..256] [--reflection-temporal on|off] [--reflection-temporal-cycle-test] [--reflection-reference] [--reflection-furnace] [--reflection-dump prefix] [--reflection-hit-guidance on|off] [--reflection-denoise on|off] [--ray-reflections on|off] [--mirror-styles on|off] [--ray-view 0..2] [--ray-query-cycle-test] "
                     "[--inspect-animation path.glb] [--animated-scene path.glb] "
                     "[--animation name] [--animation-time seconds] [--skinning linear|dual-quaternion] "
                     "[--skinning-normals surface|transformed] "
@@ -517,11 +529,19 @@ int main(int argc, char **argv)
                                       motionInstanceTest || aoBoxStep || !aoTimingPath.empty()))
             throw std::runtime_error(
                 "Animated scene is standalone; no stress/other scene/instance tests/timing");
+        if(reflectionReference){
+            if(!roughRayScene)throw std::runtime_error("Reflection reference requires --rough-reflection-scene");
+            reflectionSamples=256;reflectionDenoise=false;reflectionTemporal=false;paused=true;cameraSweep=0;
+            if(!animatedPath.empty() && animationFrozen<0)animationFrozen=.52f;
+        }
+        if(reflectionTemporalCycle && (!roughRayScene || frameLimit<8))throw std::runtime_error("Reflection temporal cycle requires rough scene and --frames >=8");
+        if(reflectionSamples<1 || reflectionSamples>256)throw std::runtime_error("Reflection samples must be 1..256");
+        if(!reflectionDump.empty() && (!roughRayScene || !verifyRay))throw std::runtime_error("Reflection dumps require rough scene and --verify-ray-query");
         if(rayScene && (!scenePath.empty() || stressCount || aoMotionScene || motionInstanceTest || !aoTimingPath.empty() || !benchmarkPath.empty()))throw std::runtime_error("Ray Query scene cannot combine other scenes or timing harnesses");
         if((verifyRay || rayCycle || rayView) && !rayScene)throw std::runtime_error("Ray diagnostics require --ray-query-scene");
         if(rayView<0 || rayView>2 || (rayCycle && frameLimit<4))throw std::runtime_error("Ray view must be 0..2; cycle test needs --frames >=4");
         if(rayScene && !pitchSpecified)pitch=14.f;
-        if(rayScene && !animatedPath.empty() && !yawSpecified)yaw=20.f;
+        if(rayScene && !animatedPath.empty() && !yawSpecified)yaw=roughRayScene?0.f:20.f;
         if(animationControlsTest && (animatedPath.empty() || frameLimit<13))
             throw std::runtime_error("--animation-controls-test requires --animated-scene and --frames >=13");
         if (!animatedPath.empty() && !rayScene && !yawSpecified)
@@ -530,8 +550,8 @@ int main(int argc, char **argv)
         auto createContext = [&]() {
             auto result = std::make_unique<VulkanContext>(window, scenePath, stressCount, verifyCulling,
                                                           occlusionScene, mixedScene, verifyPrepass, halfAo,
-                                                          aoMotionScene, animatedPath,rayScene,verifyRay);
-            if(rayScene){result->SetRayReflections(rayEnabled,rayView);result->SetMirrorStyles(mirrorStyles);}
+                                                          aoMotionScene, animatedPath,rayScene,verifyRay,roughRayScene);
+            if(rayScene){result->SetRayReflections(rayEnabled,rayView);result->SetMirrorStyles(mirrorStyles);result->SetReflectionDenoise(reflectionDenoise);result->SetReflectionHitGuidance(reflectionHitGuidance);result->ConfigureReflectionSampling(reflectionSamples,reflectionDump,reflectionFurnace);result->SetReflectionTemporal(reflectionTemporal);}
             if (!animatedPath.empty())
             {
                 result->SetAnimationClip(animationName);
@@ -676,6 +696,12 @@ int main(int argc, char **argv)
                                             ? (frames < 24 ? -.9f : .9f)
                                             : AoBoxOffset(frameLimit ? float(frames) / 60.f
                                                                      : float(glfwGetTime() - aoMotionStart)));
+            if(reflectionTemporalCycle){
+                context->SetReflectionTemporal(frames<2 || frames>=4);
+                if(frames==4)context->ConfigureReflectionSampling(16,reflectionDump,reflectionFurnace);
+                if(frames==5)context->ConfigureReflectionSampling(reflectionSamples,reflectionDump,reflectionFurnace);
+                if(frames==6)context->SetReflectionHitGuidance(false);
+            }
             if(rayCycle){const bool enabled=frames%3!=1;const int view=frames%4==3?2:0;context->SetRayReflections(enabled,view);std::cout<<"[Ray Query Cycle] frame="<<frames<<" enabled="<<enabled<<" view="<<view<<'\n';}
             if(animationControlsTest){
                 auto& c=*context->Playback();

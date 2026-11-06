@@ -1,0 +1,61 @@
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0,rgba32f) uniform readonly image2D rawImage;
+layout(binding=1,rgba32f) uniform image2D pingImage;
+layout(binding=2,rgba32f) uniform image2D filteredImage;
+layout(binding=3) uniform sampler2D normalTexture;
+layout(binding=4) uniform sampler2D depthTexture;
+layout(binding=5) uniform FilterCamera{mat4 inverseProjection;mat4 inverseView;ivec4 size;ivec4 sequence;} filterCamera;
+layout(binding=7) uniform sampler2D hitTexture;
+layout(binding=8) uniform sampler2D accumulatedTexture;
+layout(push_constant) uniform Filter{int stepSize;} spatial;
+vec4 readSource(ivec2 pixel){
+    if(spatial.stepSize==1)return texelFetch(accumulatedTexture,pixel,0);
+    if(spatial.stepSize==2)return imageLoad(filteredImage,pixel);
+    return imageLoad(pingImage,pixel);
+}
+void main(){
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(rawImage);
+    if(any(greaterThanEqual(pixel,size)))return;
+    vec4 center=readSource(pixel),result=center;
+    if(abs(center.a)>.1){
+        vec4 guide=texelFetch(normalTexture,pixel,0);
+        vec4 centerHit=texelFetch(hitTexture,pixel,0);
+        vec3 sum=vec3(0);float total=0;
+        const float kernel[5]=float[](1,4,6,4,1);
+        for(int y=-2;y<=2;++y)for(int x=-2;x<=2;++x){
+            ivec2 other=pixel+ivec2(x,y)*spatial.stepSize;
+            if(any(lessThan(other,ivec2(0))) || any(greaterThanEqual(other,size)))continue;
+            vec4 sampleValue=readSource(other);
+            // Alpha is the exact receiver roughness tag; no cross-panel blending.
+            if(abs(abs(sampleValue.a)-abs(center.a))>.001)continue;
+            vec4 neighbor=texelFetch(normalTexture,other,0);
+            float normalWeight=pow(max(dot(guide.xyz,neighbor.xyz),0),64);
+            float depthWeight=exp(-abs(guide.w-neighbor.w)/max(.02,.03*guide.w));
+            float hitWeight=1;
+            if(filterCamera.size.z!=0){
+                vec4 otherHit=texelFetch(hitTexture,other,0);
+                bool centerGeometry=centerHit.w>0,otherGeometry=otherHit.w>0;
+                float roughness=abs(center.a);
+                // Soft classification weighting keeps the true rough lobe from becoming
+                // an artificially hard silhouette at an ideal-ray geometry/sky boundary.
+                if(centerGeometry!=otherGeometry)hitWeight=.03+.15*roughness;
+                else if(centerGeometry){
+                    float distanceScale=max(.1,(.05+.25*roughness)*max(centerHit.w,otherHit.w));
+                    float hitDistanceWeight=exp(-abs(centerHit.w-otherHit.w)/distanceScale);
+                    float hitNormalWeight=.05+.95*pow(max(dot(centerHit.xyz,otherHit.xyz),0),16*(1-roughness));
+                    hitWeight=hitDistanceWeight*hitNormalWeight;
+                }
+            }
+            // The guide follows the ideal ray, not the whole rough lobe. Fade its
+            // influence with roughness so it cannot restore a sharp mirror silhouette.
+            hitWeight=mix(1.0,hitWeight,.75*(1.0-abs(center.a)));
+            float weight=kernel[x+2]*kernel[y+2]*normalWeight*depthWeight*hitWeight;
+            sum+=sampleValue.rgb*weight;total+=weight;
+        }
+        if(total>0)result.rgb=sum/total;
+    }
+    // Sharp receivers and invalid pixels are copied exactly at every scale.
+    if(spatial.stepSize==2)imageStore(pingImage,pixel,result);
+    else imageStore(filteredImage,pixel,result);
+}

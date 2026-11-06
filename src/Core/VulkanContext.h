@@ -46,6 +46,7 @@ class FrustumDebug;
 class GraphicsPipeline;
 class AnimationPanel;
 class RayQueryReflections;
+class RoughReflectionFilter;
 class Buffer;
 class Image;
 class DescriptorManager;
@@ -59,7 +60,7 @@ class SkyboxPipeline;
 class VulkanContext
 {
 public:
-    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false, bool halfAo=false, bool aoMotionScene=false, const std::string& animatedPath="", bool rayScene=false, bool verifyRay=false);
+    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false, bool halfAo=false, bool aoMotionScene=false, const std::string& animatedPath="", bool rayScene=false, bool verifyRay=false, bool roughRayScene=false);
     ~VulkanContext();
     void UpdateUniformBuffer();
     void ConfigurePrepass(int mode,float range=10.f);
@@ -78,6 +79,10 @@ public:
     AnimationControls* Playback(){return m_AnimationRig?&m_AnimationControls:nullptr;}
     void SetRayReflections(bool enabled,int debug=0);
     void SetMirrorStyles(bool enabled);
+    void SetReflectionDenoise(bool enabled);
+    void SetReflectionHitGuidance(bool enabled);
+    void SetReflectionTemporal(bool enabled);
+    void ConfigureReflectionSampling(int samples,const std::string& dumpPath="",bool furnace=false);
     void ConfigureAo(float radius,float bias,int samples,bool planeAware=true);
     VkExtent2D Extent() const;
     bool NeedsRebuild() const;
@@ -126,6 +131,7 @@ private:
     std::unique_ptr<PhysicalDevice> m_PhysicalDevice;
     std::unique_ptr<LogicalDevice> m_LogicalDevice;
     std::unique_ptr<RayQueryReflections> m_Reflections;
+    std::unique_ptr<RoughReflectionFilter> m_RoughFilter;
     std::unique_ptr<Swapchain> m_Swapchain;
     std::unique_ptr<RenderPass> m_RenderPass;
     std::unique_ptr<DescriptorSetLayout>

@@ -34,7 +34,7 @@ CommandManager::CommandManager(
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
     const std::vector<MaterialData>& materials,
-    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth, GpuSkinning* skinning, AnimationPanel* animationPanel, RayQueryReflections* reflections
+    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth, GpuSkinning* skinning, AnimationPanel* animationPanel, RayQueryReflections* reflections, RoughReflectionFilter* roughFilter
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -54,7 +54,7 @@ CommandManager::CommandManager(
     m_Debug(debug),
     m_Inspector(inspector),
     m_Prepass(prepass),m_MainDepth(mainDepth),m_Skinning(skinning),m_AnimationPanel(animationPanel),m_Reflections(reflections),
-    m_SubMeshes(subMeshes),
+    m_RoughFilter(roughFilter),m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
     m_DrawOrder.resize(subMeshes.size());std::iota(m_DrawOrder.begin(),m_DrawOrder.end(),0u);
@@ -165,7 +165,7 @@ void CommandManager::CreateTimestampQueryPool()
     queryPoolInfo.queryType =
         VK_QUERY_TYPE_TIMESTAMP;
 
-    queryPoolInfo.queryCount = 22;
+    queryPoolInfo.queryCount = 28;
 
     VkResult result = vkCreateQueryPool(
         m_LogicalDevice.GetHandle(),
@@ -249,7 +249,7 @@ void CommandManager::RecordCommandBuffers()
             m_CommandBuffers[i],
             m_TimestampQueryPool,
             0,
-            22
+            28
         );
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,18);
         if(m_Skinning)m_Skinning->Record(m_CommandBuffers[i]);
@@ -258,8 +258,10 @@ void CommandManager::RecordCommandBuffers()
         if(m_Reflections)m_Reflections->RecordUpdates(m_CommandBuffers[i]);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,21);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,8);
-        if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
+        if(m_Prepass && (m_PrepassEnabled || m_RoughFilter) && !m_BenchmarkMode) m_Prepass->Record(m_CommandBuffers[i],m_VertexBuffer,m_IndexBuffer);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,9);
+        if(m_RoughFilter)m_RoughFilter->Record(m_CommandBuffers[i],m_DescriptorManager.GetDescriptorSet(),m_Reflections->Set(),m_TimestampQueryPool);
+        else for(uint32_t query=22;query<28;++query)vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,query);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,m_TimestampQueryPool,10);
         if(m_Prepass && m_RawAoEnabled && !m_BenchmarkMode) m_Prepass->RecordAo(m_CommandBuffers[i]);
         vkCmdWriteTimestamp(m_CommandBuffers[i],VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,m_TimestampQueryPool,11);
@@ -683,7 +685,7 @@ bool CommandManager::GetGpuTimingResult(
     GpuTimingResult& result
 ) const
 {
-    std::array<uint64_t, 22> timestamps{};
+    std::array<uint64_t, 28> timestamps{};
 
     VkResult queryResult = vkGetQueryPoolResults(
         m_LogicalDevice.GetHandle(),
@@ -729,6 +731,9 @@ bool CommandManager::GetGpuTimingResult(
     constexpr double nanosecondsToMilliseconds =
         1.0 / 1000000.0;
 
+    result.reflectionTemporalMs=m_RoughFilter?double(timestamps[27]-timestamps[26])*nanosecondsPerTick*nanosecondsToMilliseconds:0;
+    result.reflectionTraceMs=m_RoughFilter?double(timestamps[23]-timestamps[22])*nanosecondsPerTick*nanosecondsToMilliseconds:0;
+    result.reflectionFilterMs=m_RoughFilter?double(timestamps[25]-timestamps[24])*nanosecondsPerTick*nanosecondsToMilliseconds:0;
     result.skinningMs = m_Skinning ? double(timestamps[19]-timestamps[18])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
     result.accelerationUpdateMs = m_Reflections && m_Reflections->Dynamic() ? double(timestamps[21]-timestamps[20])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;
     result.temporalMs = m_RawAoEnabled && !m_BenchmarkMode ? double(timestamps[17]-timestamps[16])*nanosecondsPerTick*nanosecondsToMilliseconds : 0.0;

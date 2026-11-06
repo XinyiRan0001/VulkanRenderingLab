@@ -18,6 +18,7 @@ add_executable(VulkanRenderingLab
     src/Core/AnimationRig.cpp
     src/Core/GpuSkinning.cpp
     src/Core/AnimationPanel.cpp
+    src/Core/RoughReflectionFilter.cpp
     src/Core/RayQueryReflections.cpp
     src/Core/InstancedScene.cpp
     src/Core/GpuCulling.cpp
@@ -164,7 +165,11 @@ set(RAY_SHADER "${CMAKE_CURRENT_BINARY_DIR}/shaders/triangle_ray.frag.spv")
 add_custom_command(OUTPUT "${RAY_SHADER}"
     COMMAND "${Vulkan_GLSLC_EXECUTABLE}" --target-env=vulkan1.2 -DENABLE_RAY_QUERY=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" -o "${RAY_SHADER}"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" VERBATIM)
-add_custom_target(RendererShaders DEPENDS ${SHADER_OUTPUTS} "${RAY_SHADER}")
+set(ROUGH_SHADER "${CMAKE_CURRENT_BINARY_DIR}/shaders/rough_trace.comp.spv")
+add_custom_command(OUTPUT "${ROUGH_SHADER}"
+    COMMAND "${Vulkan_GLSLC_EXECUTABLE}" --target-env=vulkan1.2 -fshader-stage=compute -DENABLE_RAY_QUERY=1 -DROUGH_COMPUTE=1 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" -o "${ROUGH_SHADER}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/triangle.frag" VERBATIM)
+add_custom_target(RendererShaders DEPENDS ${SHADER_OUTPUTS} "${RAY_SHADER}" "${ROUGH_SHADER}")
 add_dependencies(VulkanRenderingLab RendererShaders)
 
 if(MSVC)
@@ -251,4 +256,18 @@ if(BUILD_TESTING)
     target_include_directories(RayQueryMathTests PRIVATE src)
     target_link_libraries(RayQueryMathTests PRIVATE Vulkan::Vulkan glfw glm::glm)
     add_test(NAME RayQueryMathTests COMMAND RayQueryMathTests)
+endif()
+
+
+if(BUILD_TESTING)
+    add_executable(RoughReflectionEstimatorTests tests/RoughReflectionEstimatorTests.cpp)
+    target_link_libraries(RoughReflectionEstimatorTests PRIVATE glm::glm)
+    add_test(NAME RoughReflectionEstimatorTests COMMAND RoughReflectionEstimatorTests)
+endif()
+
+
+if(BUILD_TESTING)
+    add_executable(ReflectionHistoryStateTests tests/ReflectionHistoryStateTests.cpp)
+    target_include_directories(ReflectionHistoryStateTests PRIVATE src)
+    add_test(NAME ReflectionHistoryStateTests COMMAND ReflectionHistoryStateTests)
 endif()

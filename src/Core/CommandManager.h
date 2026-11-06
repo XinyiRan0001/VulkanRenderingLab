@@ -25,14 +25,17 @@
 #include "GpuSkinning.h"
 #include "AnimationPanel.h"
 #include "RayQueryReflections.h"
+#include "RoughReflectionFilter.h"
 #include "HiZInspector.h"
 #include "FrustumDebug.h"
 
 class CommandManager
 {
+    RoughReflectionFilter* m_RoughFilter=nullptr;
 public:
     struct GpuTimingResult
     {
+        double reflectionTraceMs = 0, reflectionFilterMs = 0, reflectionTemporalMs = 0;
         double skinningMs = 0;
         double accelerationUpdateMs = 0;
         double prepassMs = 0.0;
@@ -63,7 +66,7 @@ public:
         const DescriptorManager& descriptorManager,
         const std::vector<SubMesh>& subMeshes,
         const std::vector<MaterialData>& materials,
-        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr, ScenePrepass* prepass = nullptr, VkImage mainDepth = VK_NULL_HANDLE, GpuSkinning* skinning=nullptr, AnimationPanel* animationPanel=nullptr, RayQueryReflections* reflections=nullptr
+        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr, ScenePrepass* prepass = nullptr, VkImage mainDepth = VK_NULL_HANDLE, GpuSkinning* skinning=nullptr, AnimationPanel* animationPanel=nullptr, RayQueryReflections* reflections=nullptr, RoughReflectionFilter* roughFilter=nullptr
     );
     ~CommandManager();
 

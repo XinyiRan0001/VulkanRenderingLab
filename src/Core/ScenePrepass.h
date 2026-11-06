@@ -91,6 +91,8 @@ class ScenePrepass
     {
         return m_Temporal->View();
     }
+    VkImageView NormalView() const { return m_Normal->GetView(); }
+    VkImageView DepthView() const { return m_Depth->GetView(); }
     VkSampler Sampler() const
     {
         return m_Sampler;

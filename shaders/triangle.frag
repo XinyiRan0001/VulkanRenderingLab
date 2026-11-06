@@ -36,6 +36,7 @@ layout(binding = 6) uniform sampler2D brdfLUT;
 layout(binding = 7)
     uniform samplerCube irradianceMap;
 
+#ifndef ROUGH_COMPUTE
 layout(push_constant) uniform MaterialPushConstant
 {
     ivec4 flags;
@@ -56,18 +57,28 @@ layout(location = 5) flat in int fragShadowMode;
 
 layout(location = 6) in vec4 fragTangent;
 layout(location = 7) flat in vec4 fragInstanceProperties;
+#else
+struct ComputeMaterial { vec4 properties; };
+const ComputeMaterial material=ComputeMaterial(vec4(0));
+#endif
 layout(binding = 8) uniform sampler2D normalMap;
 layout(binding = 9) uniform sampler2D metallicRoughnessMap;
 layout(binding = 10) uniform sampler2D occlusionMap;
 layout(binding = 11) uniform sampler2D emissiveMap;
 layout(binding = 14) uniform sampler2D screenAo;
+#ifndef ROUGH_COMPUTE
 layout(location = 0) out vec4 outColor;
+#endif
 #ifdef ENABLE_RAY_QUERY
 layout(set=1,binding=0) uniform accelerationStructureEXT rayScene;
 struct RayTriangle{vec4 a,b,c,na,nb,nc,color,properties,uv01,uv2;};
 layout(set=1,binding=1,std430) readonly buffer RayTriangles{RayTriangle rayTriangles[];};
-layout(set=1,binding=2) uniform RaySettings{vec4 settings;} ray;
+layout(set=1,binding=2) uniform RaySettings{vec4 settings;vec4 filterSettings;} ray;
 layout(set=1,binding=7) uniform sampler2D rayAtlas;
+#ifndef ROUGH_COMPUTE
+layout(set=1,binding=8) uniform sampler2D rawReflectionTexture;
+layout(set=1,binding=9) uniform sampler2D filteredReflectionTexture;
+#endif
 #endif
 
 
@@ -75,6 +86,7 @@ layout(set=1,binding=7) uniform sampler2D rayAtlas;
 // Shadow depth utilities
 // =============================================================
 
+#ifndef ROUGH_COMPUTE
 float LinearizeShadowDepth(float depth)
 {
     const float nearPlane = 0.1;
@@ -382,6 +394,7 @@ float CalculateShadow(
 // Cook-Torrance GGX BRDF
 // =============================================================
 
+#endif
 const float PI = 3.14159265359;
 
 
@@ -775,13 +788,13 @@ vec3 ResolveMirrorStyles(vec3 radiance,int styles[3],vec3 weights[3],int count){
     }
     return radiance;
 }
-vec3 TraceMirror(vec3 p,vec3 n,vec3 viewDirection,out bool hit,out float distance){
-    vec3 direction=normalize(reflect(-viewDirection,n));vec3 origin=p+n*ray.settings.z;
+vec3 TraceMirror(vec3 p,vec3 n,vec3 direction,bool singleBounce,out bool hit,out float distance){
+    vec3 origin=p+n*ray.settings.z;
     // Iterative path: the primary receiver already supplied the first reflection.
     // Up to three traced segments, including at most two further mirror hits.
     vec3 normal=vec3(0),position=vec3(0);
     int styles[3];vec3 weights[3];int count=1;
-    styles[0]=ray.settings.x>1.5?int(material.properties.w+.5)-1:0;
+    styles[0]=!singleBounce && ray.settings.x>1.5?int(material.properties.w+.5)-1:0;
     weights[0]=vec3(1);
     RayTriangle triangle;vec2 bary=vec2(0);
     hit=false;distance=ray.settings.w;
@@ -812,7 +825,7 @@ vec3 TraceMirror(vec3 p,vec3 n,vec3 viewDirection,out bool hit,out float distanc
         if(triangle.properties.z<.5)break;
         // Never shade an intermediate mirror as an opaque painted surface.
         // The bounded path returns no extra radiance if the budget is exhausted.
-        if(segment==2)return vec3(0);
+        if(singleBounce || segment==2)return vec3(0);
         styles[count]=ray.settings.x>1.5?int(triangle.properties.z+.5)-1:0;
         weights[count]=FresnelSchlick(max(dot(normal,-direction),0.0),
                                     mix(vec3(.04),triangle.color.rgb,triangle.properties.x));
@@ -857,7 +870,54 @@ vec3 TraceMirror(vec3 p,vec3 n,vec3 viewDirection,out bool hit,out float distanc
     }else radiance+=color*.04*(1-metallic);
     return ResolveMirrorStyles(radiance,styles,weights,count);
 }
+// Scramble the stratified sequence per pixel to trade coherent ghosts for fine grain.
+float ReflectionSampleShift(uvec2 pixel,uint salt){
+    uint h=pixel.x*0x9e3779b9u ^ pixel.y*0x85ebca6bu ^ salt;
+    h^=h>>16;h*=0x7feb352du;h^=h>>15;h*=0x846ca68bu;h^=h>>16;
+    return float(h>>8)*5.960464477539063e-8;
+}
+// GGX NDF p(h)=D(h)*NdotH. Reflection Jacobian: p(l)=p(h)/(4*VdotH).
+// fr*cos/pdf simplifies to F*G2*VdotH/(NdotV*NdotH); D cancels.
+// Use exact height-correlated Smith masking for this stochastic indirect path.
+float RoughSmithLambda(float cosine,float alpha){
+    float c2=cosine*cosine;
+    return .5*(sqrt(1.0+alpha*alpha*max(0.0,1.0-c2)/max(c2,1e-12))-1.0);
+}
+vec3 RoughGgxSampleWeight(vec3 f0,float ndv,float ndl,float ndh,float vdh,float alpha){
+    if(ndv<=0.0 || ndl<=0.0 || ndh<=0.0 || vdh<=0.0)return vec3(0);
+    float geometry=1.0/(1.0+RoughSmithLambda(ndv,alpha)+RoughSmithLambda(ndl,alpha));
+    return FresnelSchlick(vdh,f0)*(geometry*vdh/max(ndv*ndh,1e-12));
+}
+vec3 TraceRoughReflection(vec3 p,vec3 n,vec3 v,float roughness,vec3 f0,uint samples,bool unitEnvironment,uint phase,ivec2 pixelPosition,out bool hit,out float distance){
+    vec3 axis=abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0);
+    vec3 tangent=normalize(cross(axis,n)),bitangent=cross(n,tangent);
+    float alpha=roughness*roughness;
+    uvec2 pixel=uvec2(pixelPosition);
+    float radialShift=ReflectionSampleShift(pixel,0x6a09e667u ^ (phase*0x9e3779b9u));
+    float rotation=ReflectionSampleShift(pixel,0xbb67ae85u ^ (phase*0x85ebca6bu));
+    vec3 sum=vec3(0);
+    float ndv=dot(n,v);
+    hit=false;distance=ray.settings.w;
+    for(uint i=0u;i<samples;++i){
+        float u=(float(i)+clamp(radialShift,.001,.999))/float(samples);
+        float phi=2.0*PI*(float(bitfieldReverse(i))*2.3283064365386963e-10+rotation);
+        float cosTheta=sqrt((1.0-u)/(1.0+(alpha*alpha-1.0)*u));
+        float sinTheta=sqrt(max(0.0,1.0-cosTheta*cosTheta));
+        vec3 h=n*cosTheta+(tangent*cos(phi)+bitangent*sin(phi))*sinTheta;
+        vec3 direction=normalize(reflect(-v,h));
+        vec3 weight=RoughGgxSampleWeight(f0,ndv,dot(n,direction),dot(n,h),dot(v,h),alpha);
+        // Rejected samples contribute zero and stay in the fixed denominator.
+        if(max(weight.r,max(weight.g,weight.b))<=0.0)continue;
+        if(unitEnvironment){sum+=weight;continue;}
+        bool sampleHit;float sampleDistance;
+        sum+=weight*TraceMirror(p,n,direction,true,sampleHit,sampleDistance);
+        hit=hit || sampleHit;distance=min(distance,sampleDistance);
+    }
+    return sum/float(max(samples,1u));
+}
+
 #endif
+#ifndef ROUGH_COMPUTE
 void main()
 {
     // =========================================================
@@ -1022,7 +1082,15 @@ void main()
 #ifdef ENABLE_RAY_QUERY
     bool useRay=material.properties.w>.5 && ray.settings.x>.5;
     vec3 rayRadiance=vec3(0);bool rayHit=false;float rayDistance=0;
-    if(useRay){rayRadiance=TraceMirror(fragWorldPosition,normal,viewDirection,rayHit,rayDistance);
+    if(useRay){
+        if(material.properties.w>3.5 && ray.filterSettings.x>.5){
+            vec4 sampled=ray.filterSettings.y>.5?
+                texelFetch(filteredReflectionTexture,ivec2(gl_FragCoord.xy),0):
+                texelFetch(rawReflectionTexture,ivec2(gl_FragCoord.xy),0);
+            rayRadiance=sampled.rgb;rayHit=sampled.a>0;
+        }else rayRadiance=material.properties.w>3.5?
+            TraceRoughReflection(fragWorldPosition,normal,viewDirection,roughness,mix(vec3(.04),baseColor,metallic),8u,false,0u,ivec2(gl_FragCoord.xy),rayHit,rayDistance):
+            TraceMirror(fragWorldPosition,normal,normalize(reflect(-viewDirection,normal)),false,rayHit,rayDistance);
         if(ray.settings.y>1.5){outColor=vec4(rayHit?vec3(.05,.8,.15):vec3(.5,.05,.7),1);return;}
         if(ray.settings.y>.5){outColor=vec4(1-exp(-rayRadiance),1);return;}
     }
@@ -1118,7 +1186,8 @@ void main()
                 environmentBRDF.y
             );
 #ifdef ENABLE_RAY_QUERY
-        if(useRay)specularEnvironmentLighting=rayRadiance*fresnel;
+        // Rough output already includes the receiver BRDF/Fresnel in its estimator.
+        if(useRay)specularEnvironmentLighting=material.properties.w>3.5?rayRadiance:rayRadiance*fresnel;
 #endif
 
         // Screen-space AO affects indirect diffuse only. Existing material AO is unchanged.
@@ -1142,7 +1211,8 @@ void main()
             metallic
         );
 #ifdef ENABLE_RAY_QUERY
-    if(useRay && !environmentLightingEnabled)fallbackAmbient+=rayRadiance*FresnelSchlickRoughness(max(dot(normal,viewDirection),.001),mix(vec3(.04),baseColor,metallic),roughness);
+    if(useRay && !environmentLightingEnabled)fallbackAmbient+=material.properties.w>3.5?rayRadiance:
+        rayRadiance*FresnelSchlickRoughness(max(dot(normal,viewDirection),.001),mix(vec3(.04),baseColor,metallic),roughness);
 #endif
 
     if(ubo.lightingSettings.z>.5) fallbackAmbient*=texelFetch(screenAo,ivec2(gl_FragCoord.xy),0).r;
@@ -1187,3 +1257,58 @@ void main()
             alpha
         );
 }
+
+#else
+layout(local_size_x=8,local_size_y=8) in;
+layout(set=2,binding=0,rgba32f) uniform writeonly image2D roughRawOutput;
+layout(set=2,binding=6,rgba32f) uniform writeonly image2D roughHitOutput;
+// A deterministic ideal-direction query is a stable proxy for the reflection lobe.
+// Never average unrelated sample normals or take the nearest of stochastic samples.
+vec4 ReflectionHitGuide(vec3 world,vec3 normal,vec3 viewDirection){
+    vec3 direction=normalize(reflect(-viewDirection,normal));
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query,rayScene,0,255,world+normal*ray.settings.z,ray.settings.z,direction,ray.settings.w);
+    ProceedMirror(query);
+    if(rayQueryGetIntersectionTypeEXT(query,true)!=gl_RayQueryCommittedIntersectionTriangleEXT)
+        return vec4(0,0,0,-1); // Environment; invalid receiver uses zero instead.
+    RayTriangle triangle=rayTriangles[rayQueryGetIntersectionPrimitiveIndexEXT(query,true)];
+    vec2 bary=rayQueryGetIntersectionBarycentricsEXT(query,true);
+    vec3 hitNormal=normalize(triangle.na.xyz*(1-bary.x-bary.y)+triangle.nb.xyz*bary.x+triangle.nc.xyz*bary.y);
+    if(dot(hitNormal,direction)>0)hitNormal=-hitNormal;
+    return vec4(hitNormal,rayQueryGetIntersectionTEXT(query,true));
+}
+layout(set=2,binding=3) uniform sampler2D roughNormal;
+layout(set=2,binding=4) uniform sampler2D roughDepth;
+layout(set=2,binding=5) uniform FilterCamera{mat4 inverseProjection;mat4 inverseView;ivec4 size;ivec4 sequence;} filterCamera;
+void main(){
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(pixel,filterCamera.size.xy)))return;
+    vec4 outputValue=vec4(0),hitGuide=vec4(0);
+    vec4 guide=texelFetch(roughNormal,pixel,0);
+    float depth=texelFetch(roughDepth,pixel,0).r;
+    if(guide.w>0 && depth<1){
+        vec2 uv=(vec2(pixel)+.5)/vec2(filterCamera.size.xy);
+        vec4 view=filterCamera.inverseProjection*vec4(uv*2-1,depth,1);
+        view/=view.w;
+        vec3 world=(filterCamera.inverseView*view).xyz;
+        vec3 normal=normalize(mat3(filterCamera.inverseView)*guide.xyz);
+        // This demo's receivers are three fixed coplanar rectangles. Use the same
+        // bounds as scene generation; other visible geometry must remain invalid.
+        if(abs(world.y)<.002 && normal.y>.99 && world.x>=-4 && world.x<=4 && world.z>=-3 && world.z<=5){
+            float roughness=world.x< -1.33?.04:world.x<1.33?.27:.55;
+            vec3 radiance=vec3(0);
+            bool hit=false;
+            if(ray.settings.x>.5){
+                float distance;
+                radiance=TraceRoughReflection(world,normal,normalize(ubo.cameraPosition.xyz-world),
+                                              roughness,vec3(.75,.77,.8),uint(abs(filterCamera.size.w)),filterCamera.size.w<0,uint(filterCamera.sequence.x),pixel,hit,distance);
+            }
+            hitGuide=ray.settings.x>.5?
+                ReflectionHitGuide(world,normal,normalize(ubo.cameraPosition.xyz-world)):vec4(0,0,0,-1);
+            outputValue=vec4(radiance,hit?roughness:-roughness);
+        }
+    }
+    imageStore(roughRawOutput,pixel,outputValue);
+    imageStore(roughHitOutput,pixel,hitGuide);
+}
+#endif

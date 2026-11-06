@@ -216,6 +216,7 @@ bool Renderer::DrawFrame()
             m_TemporalTimingAccumulator += timing.temporalMs;
             m_SkinningTimingAccumulator+=timing.skinningMs;
             m_AccelerationTimingAccumulator+=timing.accelerationUpdateMs;
+            m_ReflectionTraceAccumulator+=timing.reflectionTraceMs;m_ReflectionFilterAccumulator+=timing.reflectionFilterMs;m_ReflectionTemporalAccumulator+=timing.reflectionTemporalMs;
             m_HiZTimingAccumulator += timing.hiZPassMs;
             m_CullingTimingAccumulator += timing.cullingPassMs;
             m_ShadowTimingAccumulator +=
@@ -256,7 +257,7 @@ bool Renderer::DrawFrame()
                     << std::fixed
                     << std::setprecision(3)
                     << "[GPU Timing Average] "
-                    << "Skinning: " << m_SkinningTimingAccumulator / sampleCount << " ms | AS Update: " << m_AccelerationTimingAccumulator / sampleCount << " ms | Prepass: " << m_PrepassTimingAccumulator / sampleCount << " ms | SSAO: " << m_SsaoTimingAccumulator / sampleCount << " ms | Blur: " << m_BlurTimingAccumulator / sampleCount << " ms | Resolve: " << m_ResolveTimingAccumulator / sampleCount << " ms | Temporal: " << m_TemporalTimingAccumulator / sampleCount << " ms | HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
+                    << "Reflection Trace: "<<m_ReflectionTraceAccumulator/sampleCount<<" ms | Reflection Spatial: "<<m_ReflectionFilterAccumulator/sampleCount<<" ms | Reflection Temporal: "<<m_ReflectionTemporalAccumulator/sampleCount<<" ms | Skinning: " << m_SkinningTimingAccumulator / sampleCount << " ms | AS Update: " << m_AccelerationTimingAccumulator / sampleCount << " ms | Prepass: " << m_PrepassTimingAccumulator / sampleCount << " ms | SSAO: " << m_SsaoTimingAccumulator / sampleCount << " ms | Blur: " << m_BlurTimingAccumulator / sampleCount << " ms | Resolve: " << m_ResolveTimingAccumulator / sampleCount << " ms | Temporal: " << m_TemporalTimingAccumulator / sampleCount << " ms | HiZ Setup: " << m_HiZTimingAccumulator / sampleCount << " ms | Cull/Compact: " << m_CullingTimingAccumulator / sampleCount << " ms | Shadow: "
                     << averageShadowMs
                     << " ms | Main: "
                     << averageMainMs
@@ -273,6 +274,7 @@ bool Renderer::DrawFrame()
                 m_TemporalTimingAccumulator = 0.0;
                 m_SkinningTimingAccumulator=0;
                 m_AccelerationTimingAccumulator=0;
+                m_ReflectionTraceAccumulator=m_ReflectionFilterAccumulator=m_ReflectionTemporalAccumulator=0;
                 m_HiZTimingAccumulator = 0.0;
                 m_CullingTimingAccumulator = 0.0;
                 m_ShadowTimingAccumulator = 0.0;

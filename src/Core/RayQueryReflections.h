@@ -11,6 +11,10 @@ class RayQueryReflections
     ~RayQueryReflections();
     void Build(const MeshData &, bool verify, const Buffer *deformed = nullptr);
     void Update();
+    void SetFilterImages(VkImageView raw,VkImageView filtered,VkSampler sampler);
+    void SetFiltered(bool value) { m_Filtered=value; }
+    bool Filtered() const { return m_Filtered; }
+    bool HasFilter() const { return m_HasFilter; }
     void RecordUpdates(VkCommandBuffer) const;
     void MarkSubmitted()
     {
@@ -76,7 +80,7 @@ class RayQueryReflections
     VkPipeline m_Gather = VK_NULL_HANDLE;
     VkPipelineLayout m_GatherLayout = VK_NULL_HANDLE;
     bool m_Dynamic = false, m_Verify = false, m_Pending = false;
-    bool m_HasAlpha=false;
+    bool m_HasAlpha=false, m_HasFilter=false, m_Filtered=true;
     VkAccelerationStructureGeometryKHR Geometry() const;
     VkAccelerationStructureGeometryKHR Instances() const;
     bool Accept(const Triangle &, glm::vec2 bary) const;

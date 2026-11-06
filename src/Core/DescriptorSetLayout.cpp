@@ -197,7 +197,7 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
     // All descriptor bindings
     // =========================================================
 
-    const std::array<
+    std::array<
         VkDescriptorSetLayoutBinding,
         15
     > bindings =
@@ -221,6 +221,9 @@ void DescriptorSetLayout::CreateDescriptorSetLayout()
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
 
+    for (auto& binding : bindings)
+        if(binding.binding==0 || binding.binding==5 || binding.binding==6 || binding.binding==7)
+            binding.stageFlags |= VK_SHADER_STAGE_COMPUTE_BIT;
     layoutInfo.sType =
         VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 

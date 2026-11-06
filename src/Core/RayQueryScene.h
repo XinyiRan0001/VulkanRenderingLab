@@ -1,7 +1,7 @@
 #pragma once
 #include "MeshData.h"
 #include <cmath>
-inline MeshData CreateRayQueryScene(bool character = false)
+inline MeshData CreateRayQueryScene(bool character = false, bool roughReflection = false)
 {
     MeshData mesh;
     const auto material = [&](glm::vec3 color, float metal, float rough, bool mirror = false) {
@@ -39,10 +39,24 @@ inline MeshData CreateRayQueryScene(bool character = false)
             mesh.indices.push_back(first + k);
         mesh.subMeshes.push_back({index, 6, mat});
     };
-    quad({-4, 0, -3}, {-4, 0, 5}, {4, 0, 5}, {4, 0, -3}, {0, 1, 0}, toon);
+    if (roughReflection)
+    {
+        constexpr float edges[] = {-4.f, -1.33f, 1.33f, 4.f};
+        constexpr float roughness[] = {.04f, .27f, .55f};
+        for (int i = 0; i < 3; ++i)
+        {
+            int panel = material({.75f, .77f, .8f}, 1, roughness[i], true);
+            mesh.materials[panel].reflectionStyle = 3; // Single-bounce rough receiver.
+            const float left = edges[i], right = edges[i + 1];
+            quad({left, 0, -3}, {left, 0, 5}, {right, 0, 5}, {right, 0, -3}, {0, 1, 0}, panel);
+        }
+    }
+    else
+        quad({-4, 0, -3}, {-4, 0, 5}, {4, 0, 5}, {4, 0, -3}, {0, 1, 0}, toon);
     quad({-4, 0, -3.05f}, {4, 0, -3.05f}, {4, 4, -3.05f}, {-4, 4, -3.05f}, {0, 0, 1}, wall);
     quad({-4, 0, 5}, {-4, 0, -3.05f}, {-4, 4, -3.05f}, {-4, 4, 5}, {1, 0, 0}, wall);
-    quad({-2.7f, .3f, -3}, {2.7f, .3f, -3}, {2.7f, 3.5f, -3}, {-2.7f, 3.5f, -3}, {0, 0, 1}, duotone);
+    if (!roughReflection)
+        quad({-2.7f, .3f, -3}, {2.7f, .3f, -3}, {2.7f, 3.5f, -3}, {-2.7f, 3.5f, -3}, {0, 0, 1}, duotone);
     const auto sphere = [&](glm::vec3 center, float radius, int mat) {
         uint32_t first = uint32_t(mesh.vertices.size()), index = uint32_t(mesh.indices.size());
         constexpr int rows = 24, cols = 48;
@@ -71,6 +85,13 @@ inline MeshData CreateRayQueryScene(bool character = false)
             }
         mesh.subMeshes.push_back({index, uint32_t(mesh.indices.size()) - index, mat});
     };
+    if (roughReflection)
+    {
+        // Identical source objects make the lobe widths easier to compare.
+        for (float x : {-2.55f, .88f, 2.55f})
+            sphere({x, .48f, -1.45f}, .48f, red);
+        return mesh;
+    }
     sphere(character ? glm::vec3(-1.9f, .7f, .4f) : glm::vec3(-1.35f, .7f, .1f), .7f, red);
     sphere(character ? glm::vec3(1.9f, .85f, -.7f) : glm::vec3(1.15f, .85f, -.7f), .85f, gold);
     sphere(character ? glm::vec3(2.8f, .38f, 1.5f) : glm::vec3(.15f, .38f, 1.5f), .38f, blue);

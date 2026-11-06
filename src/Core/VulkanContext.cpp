@@ -1,3 +1,4 @@
+#include "RoughReflectionFilter.h"
 #include "VulkanContext.h"
 
 #include "Window.h"
@@ -63,7 +64,7 @@ const char* LightingViewName(int mode) {
 }
 }
 
-VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass, bool halfAo, bool aoMotionScene, const std::string& animatedPath, bool rayScene, bool verifyRay)
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass, bool halfAo, bool aoMotionScene, const std::string& animatedPath, bool rayScene, bool verifyRay, bool roughRayScene)
     : m_Window(window)
 {
     // =========================================================
@@ -249,9 +250,9 @@ m_GraphicsPipeline =
     if (m_IsGltfScene) {
         if(!animatedPath.empty()){
             m_AnimationRig=std::make_unique<AnimationRig>(AnimationRig::Load(animatedPath));combinedMesh=GpuSkinning::BuildMesh(*m_AnimationRig,GLTFLoader::Load(animatedPath,true),!rayScene,characterPlacement);
-            if(rayScene){auto room=CreateRayQueryScene(true);uint32_t vertexBase=uint32_t(combinedMesh.vertices.size()),indexBase=uint32_t(combinedMesh.indices.size());int materialBase=int(combinedMesh.materials.size());combinedMesh.vertices.insert(combinedMesh.vertices.end(),room.vertices.begin(),room.vertices.end());for(auto index:room.indices)combinedMesh.indices.push_back(index+vertexBase);for(auto sub:room.subMeshes){sub.firstIndex+=indexBase;sub.materialId+=materialBase;combinedMesh.subMeshes.push_back(sub);}combinedMesh.materials.insert(combinedMesh.materials.end(),room.materials.begin(),room.materials.end());}
+            if(rayScene){auto room=CreateRayQueryScene(true, roughRayScene);uint32_t vertexBase=uint32_t(combinedMesh.vertices.size()),indexBase=uint32_t(combinedMesh.indices.size());int materialBase=int(combinedMesh.materials.size());combinedMesh.vertices.insert(combinedMesh.vertices.end(),room.vertices.begin(),room.vertices.end());for(auto index:room.indices)combinedMesh.indices.push_back(index+vertexBase);for(auto sub:room.subMeshes){sub.firstIndex+=indexBase;sub.materialId+=materialBase;combinedMesh.subMeshes.push_back(sub);}combinedMesh.materials.insert(combinedMesh.materials.end(),room.materials.begin(),room.materials.end());}
         }
-        else combinedMesh = rayScene?CreateRayQueryScene():aoMotionScene ? CreateAoMotionScene() : GLTFLoader::Load(scenePath);
+        else combinedMesh = rayScene?CreateRayQueryScene(false, roughRayScene):aoMotionScene ? CreateAoMotionScene() : GLTFLoader::Load(scenePath);
     } else {
     MeshData maryMesh = OBJLoader::Load(
         "assets/models/mary/Marry.obj"
@@ -1211,6 +1212,12 @@ m_GraphicsPipeline =
         m_GpuCulling = std::make_unique<GpuCulling>(*m_PhysicalDevice,*m_LogicalDevice,*m_InstanceBuffer,combinedMesh,m_VerifyCulling,m_HiZ.get(),
             VkDescriptorImageInfo{m_BRDFLUT->GetSampler(),m_BRDFLUT->GetImageView(),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
     m_ScenePrepass=std::make_unique<ScenePrepass>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_UniformBuffer,*m_InstanceBuffer,combinedMesh.subMeshes,verifyPrepass,halfAo,m_Skinning?m_VertexBuffer.get():nullptr,m_Skinning?m_Skinning->PreviousOffset():0,m_Skinning.get());
+    if(roughRayScene){
+        m_RoughFilter=std::make_unique<RoughReflectionFilter>(*m_PhysicalDevice,*m_LogicalDevice,m_Swapchain->GetExtent(),
+            m_DescriptorSetLayout->GetHandle(),m_Reflections->Layout(),m_ScenePrepass->NormalView(),
+            m_ScenePrepass->DepthView(),m_ScenePrepass->Sampler(),verifyRay);
+        m_Reflections->SetFilterImages(m_RoughFilter->RawView(),m_RoughFilter->FilteredView(),m_ScenePrepass->Sampler());
+    }
     if (m_HiZ) m_HiZInspector=std::make_unique<HiZInspector>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),*m_HiZ,*m_GpuCulling,combinedMesh);
     if(m_GpuCulling) {
         const auto& layout=m_GpuCulling->Layout();
@@ -1277,7 +1284,7 @@ m_GraphicsPipeline =
             *m_DescriptorManager,
             combinedMesh.subMeshes,
             combinedMesh.materials,
-            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle(),m_Skinning.get(),m_AnimationPanel.get(),m_Reflections.get()
+            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle(),m_Skinning.get(),m_AnimationPanel.get(),m_Reflections.get(),m_RoughFilter.get()
         );
 
     std::cout
@@ -1457,7 +1464,10 @@ void VulkanContext::SetupCameraControls()
                 if(key==GLFW_KEY_EQUAL){c.Activate(AnimationControls::Faster);return;}
             }
             if (action == GLFW_PRESS) {
-                if(context->m_Reflections && key==GLFW_KEY_F11){context->m_Reflections->SetEnabled(!context->m_Reflections->Enabled());return;}
+                if(context->m_RoughFilter && key==GLFW_KEY_Q){context->SetReflectionTemporal(!context->m_RoughFilter->TemporalEnabled());return;}
+                if(context->m_RoughFilter && key==GLFW_KEY_N){context->SetReflectionHitGuidance(!context->m_RoughFilter->HitGuidance());return;}
+                if(context->m_RoughFilter && key==GLFW_KEY_B){context->SetReflectionDenoise(!context->m_Reflections->Filtered());return;}
+                if(context->m_Reflections && key==GLFW_KEY_F11){context->SetRayReflections(!context->m_Reflections->Enabled(),context->m_Reflections->Debug());return;}
                 if(context->m_Reflections && key==GLFW_KEY_F9){context->m_Reflections->SetStylized(!context->m_Reflections->Stylized());std::cout<<"[Mirror Style] "<<(context->m_Reflections->Stylized()?"per-mirror":"PBR")<<'\n';return;}
                 if(context->m_Reflections && key==GLFW_KEY_F10){context->m_Reflections->SetDebug((context->m_Reflections->Debug()+1)%3);return;}
                 if(key==GLFW_KEY_G && context->m_ScenePrepass){context->SetAoHistoryView((context->m_ScenePrepass->TemporalDebug()+1)%3);context->ConfigurePrepass(6,context->m_ScenePrepass->DepthRange());}
@@ -1760,8 +1770,14 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
 
     std::ostringstream title;
 
+    title << "Vulkan Rendering Lab";
+    if(m_Reflections)
+        title << " | RQ " << (m_Reflections->Enabled()?"ON":"OFF")
+              << " [F11] view=" << m_Reflections->Debug();
+    else
+        title << " | Raster";
+    if(m_RoughFilter)title<<" | Accum "<<(m_RoughFilter->TemporalEnabled()?"ON":"OFF")<<" H="<<m_RoughFilter->HistoryFrames()<<" [Q] | Spatial "<<(m_Reflections->Filtered()?"ON":"OFF")<<" [B] Hit "<<(m_RoughFilter->HitGuidance()?"ON":"OFF")<<" [N] "<<m_RoughFilter->Samples()<<" spp";
     title
-        << "Vulkan Rendering Lab"
         << " | "
         << shadowModeName
         << " | "
@@ -3032,6 +3048,7 @@ VulkanContext::~VulkanContext()
     m_Renderer.reset();
     m_CommandManager.reset();
     m_AnimationPanel.reset();
+    m_RoughFilter.reset();
     m_DescriptorManager.reset();
     m_MaterialImages.clear();
 
@@ -3508,6 +3525,7 @@ void VulkanContext::CreateShadowSampler()
 void VulkanContext::UpdateUniformBuffer()
 {
     m_Renderer->WaitForFrame();
+    if(m_RoughFilter)m_RoughFilter->ReadCompleted();
     if(m_Skinning)m_Skinning->ReadCompleted();
     if(m_Reflections){m_Reflections->ReadCompleted(m_Skinning?&m_Skinning->CompletedVertices():nullptr);m_Reflections->Update();}
     if(m_Skinning){
@@ -3729,6 +3747,9 @@ void VulkanContext::UpdateUniformBuffer()
     }
     const auto& cullingCamera = m_CullingFrozen ? m_FrozenCamera : ubo;
     if(m_ScenePrepass) m_ScenePrepass->Update(ubo,!m_CullingFrozen);
+    if(m_RoughFilter)m_RoughFilter->Update(ubo,
+        glm::vec4(float(m_AnimationClip),m_AnimationTime,m_AnimationControls.dual?1.f:0.f,m_AnimationControls.surface?1.f:0.f),
+        glm::ivec4(m_Reflections->Enabled()?1:0,m_Reflections->Filtered()?1:0,m_Reflections->Debug(),0));
     if (m_HiZ) m_HiZ->Update(cullingCamera);
     if (m_GpuCulling) m_GpuCulling->Update(cullingCamera,m_CullingEnabled,m_VerifyCulling,m_OcclusionEnabled);
     if (m_HiZInspector) m_HiZInspector->Update(cullingCamera,m_CullingEnabled,m_OcclusionEnabled,m_VerifyCulling);
@@ -3772,6 +3793,7 @@ void VulkanContext::ToggleSkybox()
 void VulkanContext::DrawFrame()
 {
     if(!m_Renderer->DrawFrame()) return;
+    if(m_RoughFilter)m_RoughFilter->MarkSubmitted();
     if(m_Skinning)m_Skinning->MarkSubmitted();
     if(m_Reflections)m_Reflections->MarkSubmitted();
     if(m_ScenePrepass) m_ScenePrepass->MarkSubmitted();
@@ -3799,6 +3821,7 @@ void VulkanContext::ConfigureShadowDiagnostic(int shadowMode, float yawDegrees, 
 void VulkanContext::SetCulling(bool enabled, bool verify) { m_CullingEnabled=enabled; m_VerifyCulling=verify; }
 void VulkanContext::FinishDiagnostics() {
     m_Renderer->WaitForFrame();
+    if(m_RoughFilter)m_RoughFilter->ReadCompleted();
     if(m_Skinning)m_Skinning->ReadCompleted();
     if(m_Reflections)m_Reflections->ReadCompleted(m_Skinning?&m_Skinning->CompletedVertices():nullptr);
     if(m_ScenePrepass) m_ScenePrepass->ReadCompleted();
@@ -3899,9 +3922,14 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
     const bool inspect=m_HiZInspector && m_HiZInspector->Enabled();
     const int group=inspect?m_HiZInspector->Group():0,selection=inspect?m_HiZInspector->Selection():-1,mip=inspect?m_HiZInspector->Mip():0;
     const auto animation=m_AnimationControls;
+    const bool rayTemporal=m_RoughFilter && m_RoughFilter->TemporalEnabled();
+    const bool rayFurnace=m_RoughFilter && m_RoughFilter->Furnace();
+    const int raySamples=m_RoughFilter?m_RoughFilter->Samples():8;
+    const bool rayHitGuidance=!m_RoughFilter || m_RoughFilter->HitGuidance();
+    const bool rayFiltered=!m_Reflections || m_Reflections->Filtered();
     const bool rayStylized=m_Reflections && m_Reflections->Stylized();
     const bool rayEnabled=m_Reflections && m_Reflections->Enabled();const int rayDebug=m_Reflections?m_Reflections->Debug():0;
-    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug,rayStylized](VulkanContext& context) {
+    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug,rayStylized,rayFiltered,rayHitGuidance,raySamples,rayFurnace,rayTemporal](VulkanContext& context) {
         std::apply([&](const auto&... member) { ((context.*(member.first)=member.second),...); },fields);
         context.m_CommandManager->SetSkyboxEnabled(context.m_EnableSkybox);
         context.ConfigureAo(ao.x,ao.y,int(ao.z),planeAware);
@@ -3912,7 +3940,8 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
         context.SetAdaptiveAo(adaptive);
         context.ConfigureHiZInspector(inspect,selection,mip,group);
         if(context.m_AnimationRig){context.m_AnimationControls=animation;context.m_AnimationControls.scrubbing=false;context.m_AnimationControls.modeDirty=context.m_AnimationControls.discontinuity=true;}
-        if(context.m_Reflections){context.SetRayReflections(rayEnabled,rayDebug);context.m_Reflections->SetStylized(rayStylized);}
+        if(context.m_Reflections){context.SetRayReflections(rayEnabled,rayDebug);context.m_Reflections->SetStylized(rayStylized);context.m_Reflections->SetFiltered(rayFiltered);}
+        if(context.m_RoughFilter){context.m_RoughFilter->SetHitGuidance(rayHitGuidance);context.m_RoughFilter->SetSamples(raySamples);context.m_RoughFilter->SetFurnace(rayFurnace);context.m_RoughFilter->SetTemporal(rayTemporal);}
     };
 }
 
@@ -3966,6 +3995,8 @@ void VulkanContext::SetRayReflections(bool enabled,int debug){
     if(!m_Reflections)throw std::runtime_error("No Ray Query scene loaded");
     if(debug<0||debug>2)throw std::runtime_error("Ray view must be 0..2");
     m_Reflections->SetEnabled(enabled);m_Reflections->SetDebug(debug);
+    std::cout << "[Ray Reflections] " << (enabled?"ON":"OFF")
+              << " view=" << debug << " | F11 toggles reflections, F10 changes view" << std::endl;
 }
 bool VulkanContext::AnimationPointer(double x,double y,int action){
     if(!m_AnimationPanel)return false;
@@ -3978,3 +4009,23 @@ bool VulkanContext::AnimationPointer(double x,double y,int action){
 }
 
 void VulkanContext::SetMirrorStyles(bool enabled){if(m_Reflections)m_Reflections->SetStylized(enabled);}
+
+void VulkanContext::SetReflectionDenoise(bool enabled){
+    if(m_Reflections)m_Reflections->SetFiltered(enabled);
+    if(m_RoughFilter)std::cout<<"[Reflection Spatial] "<<(enabled?"ON":"OFF")<<" [B]"<<std::endl;
+}
+
+void VulkanContext::SetReflectionHitGuidance(bool enabled){
+    if(m_RoughFilter){m_RoughFilter->SetHitGuidance(enabled);std::cout<<"[Reflection Hit Guidance] "<<(enabled?"ON":"OFF")<<" [N]"<<std::endl;}
+}
+
+void VulkanContext::ConfigureReflectionSampling(int samples,const std::string& dumpPath,bool furnace){
+    if(m_RoughFilter){
+        m_RoughFilter->SetSamples(samples);m_RoughFilter->SetDumpPath(dumpPath);m_RoughFilter->SetFurnace(furnace);
+        std::cout<<"[Reflection Sampling] spp="<<samples<<" furnace="<<furnace<<" BRDF=GGX-Smith-correlated-Schlick denominator=all_samples receiver_Fresnel=once"<<std::endl;
+    }
+}
+
+void VulkanContext::SetReflectionTemporal(bool enabled){
+    if(m_RoughFilter){m_RoughFilter->SetTemporal(enabled);std::cout<<"[Reflection Temporal] "<<(enabled?"ON":"OFF")<<" static-only [Q]"<<std::endl;}
+}

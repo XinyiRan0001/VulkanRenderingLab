@@ -52,6 +52,7 @@ private:
     double m_TemporalTimingAccumulator = 0.0;
     double m_SkinningTimingAccumulator=0;
     double m_AccelerationTimingAccumulator=0;
+    double m_ReflectionTraceAccumulator=0,m_ReflectionFilterAccumulator=0,m_ReflectionTemporalAccumulator=0;
     double m_BlurTimingAccumulator = 0.0;
     double m_SsaoTimingAccumulator = 0.0;
     double m_PrepassTimingAccumulator = 0.0;

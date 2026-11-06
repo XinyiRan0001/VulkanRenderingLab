@@ -17,6 +17,10 @@ The showcase combines a PBR character with Toon and cool/warm mirrors. Both mirr
 <details>
 <summary>More rendering examples</summary>
 
+**Rough ray-traced reflections**
+
+![Three floor panels with increasing reflection roughness](docs/images/rough-reflections.png)
+
 **Temporal AO comparison**
 
 ![Temporal SSAO comparison](docs/images/ssao-temporal-comparison.gif)
@@ -56,7 +60,7 @@ In the mirror showcase: **F9** toggles stylized/PBR reflections, **F10** cycles 
 
 ## Validation and measurement
 
-Twelve CTest targets cover asset loading, animation, visibility and rendering math. GPU verification tools compare deformed vertices and ray intersections against CPU references, check prepass consistency, and exercise playback and resource rebuilds with Vulkan synchronization validation.
+Fourteen CTest targets cover asset loading, animation, visibility and rendering math. GPU verification tools compare deformed vertices and ray intersections against CPU references, check prepass consistency, and exercise playback and resource rebuilds with Vulkan synchronization validation.
 
 ```powershell
 ctest --test-dir build -C Release --output-on-failure
@@ -68,6 +72,6 @@ GPU timestamps separate skinning, acceleration-structure updates and rendering w
 
 ## Current limits
 
-Mirror paths trace at most three segments after the primary reflection; paths still hitting a mirror at the limit terminate. Reflections use ideal directions, without stochastic rough-reflection sampling or a reflection denoiser. The character path supports one shared base-color atlas and approximates translucent ray hits with alpha cutouts. One combined scene BLAS is refitted, including static geometry. Stylized shading is an artistic model rather than physically based light transport.
+Mirror paths trace at most three segments after the primary reflection; paths still hitting a mirror at the limit terminate. The stylized mirror path uses ideal directions. The separate rough-reflection demo defaults to eight BRDF/PDF-weighted GGX samples per pixel for one bounce, with guided spatial filtering and optional static temporal accumulation. Moving reflections do not reuse history yet. The character path supports one shared base-color atlas and approximates translucent ray hits with alpha cutouts. One combined scene BLAS is refitted, including static geometry. Stylized shading is an artistic model rather than physically based light transport.
 
 See [rendering notes and demo commands](docs/rendering-notes.md) for architecture, additional scenes and implementation boundaries.
