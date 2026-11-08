@@ -10,6 +10,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <numeric>
+#include <utility>
 #include <stdexcept>
 namespace
 {
@@ -333,8 +334,12 @@ std::pair<glm::vec3, glm::vec3> GpuSkinning::Evaluate(size_t index, const std::v
 }
 void GpuSkinning::Update(size_t clip, float seconds, bool loop)
 {
+    UpdatePose(m_Rig.Sample(clip,seconds,loop));
+}
+void GpuSkinning::UpdatePose(RigPose pose)
+{
     ReadCompleted();
-    m_Current = m_Rig.Sample(clip, seconds, loop);
+    m_Current=std::move(pose);
     m_PoseData = PoseData(m_Current, m_Valid ? m_Previous : m_Current);
     m_PoseBuffer->UploadData(m_PoseData.data(), m_PoseBuffer->GetSize());
 }

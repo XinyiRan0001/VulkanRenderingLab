@@ -34,7 +34,7 @@ CommandManager::CommandManager(
     const DescriptorManager& descriptorManager,
     const std::vector<SubMesh>& subMeshes,
     const std::vector<MaterialData>& materials,
-    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth, GpuSkinning* skinning, AnimationPanel* animationPanel, RayQueryReflections* reflections, RoughReflectionFilter* roughFilter
+    GpuCulling* culling, HiZ* hiZ, FrustumDebug* debug, HiZInspector* inspector, ScenePrepass* prepass, VkImage mainDepth, GpuSkinning* skinning, AnimationPanel* animationPanel, RayQueryReflections* reflections, RoughReflectionFilter* roughFilter, FrustumDebug* legIkOverlay
 )
     : m_LogicalDevice(logicalDevice),
     m_PhysicalDevice(physicalDevice),
@@ -54,7 +54,7 @@ CommandManager::CommandManager(
     m_Debug(debug),
     m_Inspector(inspector),
     m_Prepass(prepass),m_MainDepth(mainDepth),m_Skinning(skinning),m_AnimationPanel(animationPanel),m_Reflections(reflections),
-    m_RoughFilter(roughFilter),m_SubMeshes(subMeshes),
+    m_RoughFilter(roughFilter),m_LegIkOverlay(legIkOverlay),m_SubMeshes(subMeshes),
     m_Materials(materials)
 {
     m_DrawOrder.resize(subMeshes.size());std::iota(m_DrawOrder.begin(),m_DrawOrder.end(),0u);
@@ -645,6 +645,7 @@ void CommandManager::RecordCommandBuffers()
             );
         }
 
+        if(m_LegIkOverlay && !m_BenchmarkMode)m_LegIkOverlay->Record(m_CommandBuffers[i]);
         if (m_Debug && !m_BenchmarkMode) m_Debug->Record(m_CommandBuffers[i]);
         if (m_Inspector && m_InspectorEnabled && !m_BenchmarkMode) m_Inspector->RecordPanel(m_CommandBuffers[i]);
         if(m_Prepass && m_PrepassEnabled && !m_BenchmarkMode) m_Prepass->RecordPreview(m_CommandBuffers[i]);

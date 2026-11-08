@@ -332,23 +332,24 @@ RigPose AnimationRig::Evaluate(const std::vector<RigNode> &pose) const
     };
     for (size_t i = 0; i < pose.size(); ++i)
         visit(i);
-    for (size_t i = 0; i < pose.size(); ++i)
-        if (pose[i].skin >= 0)
-        {
-            const auto &skin = skins.at(size_t(pose[i].skin));
-            Require(std::abs(glm::determinant(result.world[i])) > 1e-12f, "singular animated mesh transform");
-            const auto inverseMesh = glm::inverse(result.world[i]);
-            for (size_t j = 0; j < skin.joints.size(); ++j)
-            {
-                const auto matrix =
-                    inverseMesh * result.world.at(size_t(skin.joints[j])) * skin.inverseBind.at(j);
-                for (int c = 0; c < 4; ++c)
-                    for (int r = 0; r < 4; ++r)
-                        Require(std::isfinite(matrix[c][r]), "nonfinite skin palette");
+    RefreshPalettes(result);
+    return result;
+}
+void AnimationRig::RefreshPalettes(RigPose& result) const
+{
+    Require(result.world.size()==nodes.size(),"pose node count mismatch");
+    result.palettes.assign(nodes.size(),{});
+    for(size_t i=0;i<nodes.size();++i)
+        if(nodes[i].skin>=0){
+            const auto& skin=skins.at(size_t(nodes[i].skin));
+            Require(std::abs(glm::determinant(result.world[i]))>1e-12f,"singular animated mesh transform");
+            const auto inverseMesh=glm::inverse(result.world[i]);
+            for(size_t j=0;j<skin.joints.size();++j){
+                const auto matrix=inverseMesh*result.world.at(size_t(skin.joints[j]))*skin.inverseBind.at(j);
+                for(int c=0;c<4;++c)for(int r=0;r<4;++r)Require(std::isfinite(matrix[c][r]),"nonfinite skin palette");
                 result.palettes[i].push_back(matrix);
             }
         }
-    return result;
 }
 RigPose AnimationRig::BindPose() const
 {

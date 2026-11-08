@@ -15,6 +15,8 @@ add_executable(VulkanRenderingLab
     src/main.cpp
     src/Core/GLTFLoader.cpp
     src/Core/Cgltf.cpp
+    src/Core/LegIK.cpp
+    src/Core/CharacterLocomotion.cpp
     src/Core/AnimationRig.cpp
     src/Core/GpuSkinning.cpp
     src/Core/AnimationPanel.cpp
@@ -146,6 +148,8 @@ target_include_directories(VulkanRenderingLab PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 if(NOT Vulkan_GLSLC_EXECUTABLE)
     message(FATAL_ERROR "glslc is required to compile renderer shaders")
 endif()
+
+
 file(GLOB RENDERER_SHADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
 set(SHADER_OUTPUTS)
 foreach(SHADER IN LISTS RENDERER_SHADERS)
@@ -270,4 +274,25 @@ if(BUILD_TESTING)
     add_executable(ReflectionHistoryStateTests tests/ReflectionHistoryStateTests.cpp)
     target_include_directories(ReflectionHistoryStateTests PRIVATE src)
     add_test(NAME ReflectionHistoryStateTests COMMAND ReflectionHistoryStateTests)
+endif()
+
+
+if(BUILD_TESTING)
+    add_executable(LegIKTests tests/LegIKTests.cpp src/Core/LegIK.cpp src/Core/AnimationRig.cpp src/Core/Cgltf.cpp)
+    target_include_directories(LegIKTests PRIVATE src/Core third_party/cgltf)
+    target_link_libraries(LegIKTests PRIVATE glm::glm)
+    add_test(NAME LegIKTests COMMAND LegIKTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/character/character.glb")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(CharacterLocomotionTests tests/CharacterLocomotionTests.cpp src/Core/CharacterLocomotion.cpp src/Core/LegIK.cpp src/Core/AnimationRig.cpp src/Core/Cgltf.cpp)
+    target_include_directories(CharacterLocomotionTests PRIVATE src/Core third_party/cgltf)
+    target_link_libraries(CharacterLocomotionTests PRIVATE glm::glm)
+    add_test(NAME CharacterLocomotionTests COMMAND CharacterLocomotionTests "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/character/character.glb")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(PoseControlsTests tests/PoseControlsTests.cpp)
+    target_include_directories(PoseControlsTests PRIVATE src/Core)
+    add_test(NAME PoseControlsTests COMMAND PoseControlsTests "${CMAKE_BINARY_DIR}/pose-controls-test.cfg")
 endif()

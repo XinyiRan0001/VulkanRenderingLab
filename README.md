@@ -60,7 +60,7 @@ In the mirror showcase: **F9** toggles stylized/PBR reflections, **F10** cycles 
 
 ## Validation and measurement
 
-Fourteen CTest targets cover asset loading, animation, visibility and rendering math. GPU verification tools compare deformed vertices and ray intersections against CPU references, check prepass consistency, and exercise playback and resource rebuilds with Vulkan synchronization validation.
+Seventeen CTest targets cover asset loading, animation, inverse kinematics, character control, posture editing, visibility and rendering math. GPU verification tools compare deformed vertices and ray intersections against CPU references, check prepass consistency, and exercise playback and resource rebuilds with Vulkan synchronization validation.
 
 ```powershell
 ctest --test-dir build -C Release --output-on-failure

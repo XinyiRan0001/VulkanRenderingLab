@@ -32,6 +32,7 @@
 class CommandManager
 {
     RoughReflectionFilter* m_RoughFilter=nullptr;
+    FrustumDebug* m_LegIkOverlay=nullptr;
 public:
     struct GpuTimingResult
     {
@@ -66,7 +67,7 @@ public:
         const DescriptorManager& descriptorManager,
         const std::vector<SubMesh>& subMeshes,
         const std::vector<MaterialData>& materials,
-        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr, ScenePrepass* prepass = nullptr, VkImage mainDepth = VK_NULL_HANDLE, GpuSkinning* skinning=nullptr, AnimationPanel* animationPanel=nullptr, RayQueryReflections* reflections=nullptr, RoughReflectionFilter* roughFilter=nullptr
+        GpuCulling* culling = nullptr, HiZ* hiZ = nullptr, FrustumDebug* debug = nullptr, HiZInspector* inspector = nullptr, ScenePrepass* prepass = nullptr, VkImage mainDepth = VK_NULL_HANDLE, GpuSkinning* skinning=nullptr, AnimationPanel* animationPanel=nullptr, RayQueryReflections* reflections=nullptr, RoughReflectionFilter* roughFilter=nullptr, FrustumDebug* legIkOverlay=nullptr
     );
     ~CommandManager();
 

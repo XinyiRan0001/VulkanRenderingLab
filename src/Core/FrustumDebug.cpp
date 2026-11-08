@@ -23,11 +23,12 @@ VkShaderModule Load(VkDevice device, const char *path)
 }
 } // namespace
 FrustumDebug::FrustumDebug(const PhysicalDevice &physical, const LogicalDevice &device, VkRenderPass pass,
-                           VkExtent2D extent)
-    : m_Device(device)
+                           VkExtent2D extent,uint32_t capacity)
+    : m_Device(device),m_Capacity(capacity)
 {
+    if(capacity<48 || capacity%2)throw std::runtime_error("Debug line capacity must be even and at least 48");
     m_Vertices =
-        std::make_unique<Buffer>(physical, device, 48 * sizeof(glm::vec4), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        std::make_unique<Buffer>(physical, device, VkDeviceSize(m_Capacity) * sizeof(glm::vec4), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     const auto d = device.GetHandle();
     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -99,9 +100,9 @@ FrustumDebug::~FrustumDebug()
 void FrustumDebug::Update(const UniformBufferObject &observer, const UniformBufferObject &culling,
                           bool enabled, glm::vec4 sphere, bool inspect)
 {
-    std::array<glm::vec4, 48> lines;
+    std::vector<glm::vec4> lines(m_Capacity);
     // Clip-space points outside the viewport make the fixed draw invisible when disabled.
-    lines.fill(glm::vec4(2, 2, 0, 1));
+    std::fill(lines.begin(),lines.end(),glm::vec4(2, 2, 0, 1));
     if (enabled)
     {
         const auto inverse = glm::inverse(culling.proj * culling.view);
@@ -145,7 +146,7 @@ void FrustumDebug::Update(const UniformBufferObject &observer, const UniformBuff
                     lines[vertex++] = corners[i | bit];
                 }
     }
-    m_Vertices->UploadData(lines.data(), sizeof(lines));
+    m_Vertices->UploadData(lines.data(), lines.size()*sizeof(glm::vec4));
 }
 void FrustumDebug::Record(VkCommandBuffer cmd) const
 {
@@ -153,5 +154,12 @@ void FrustumDebug::Record(VkCommandBuffer cmd) const
     VkBuffer buffer = m_Vertices->GetHandle();
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer, &offset);
-    vkCmdDraw(cmd, 48, 1, 0, 0);
+    vkCmdDraw(cmd, m_Capacity, 1, 0, 0);
+}
+
+void FrustumDebug::UpdateLines(const glm::mat4& clip,const std::vector<glm::vec3>& endpoints){
+    if(endpoints.size()>m_Capacity || endpoints.size()%2)throw std::runtime_error("Debug overlay line capacity exceeded");
+    std::vector<glm::vec4> lines(m_Capacity,glm::vec4(2,2,0,1));
+    for(size_t i=0;i<endpoints.size();++i)lines[i]=clip*glm::vec4(endpoints[i],1);
+    m_Vertices->UploadData(lines.data(),lines.size()*sizeof(glm::vec4));
 }

@@ -72,6 +72,7 @@ class AnimationRig
     static AnimationRig Load(const std::string &path);
     RigPose Sample(size_t clip, float elapsedSeconds, bool loop = true) const;
     RigPose BindPose() const;
+    void RefreshPalettes(RigPose&) const;
     std::vector<RigNode> nodes;
     std::vector<RigSkin> skins;
     std::vector<RigClip> clips;

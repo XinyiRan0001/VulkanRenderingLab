@@ -3,6 +3,8 @@
 #include "Buffer.h"
 #include <glm/glm.hpp>
 #include <memory>
+struct PoseControls;
+class CharacterLocomotion;
 
 class AnimationPanel
 {
@@ -10,6 +12,7 @@ class AnimationPanel
     AnimationPanel(const PhysicalDevice &, const LogicalDevice &, VkRenderPass, VkExtent2D);
     ~AnimationPanel();
     void Update(const AnimationControls &, int windowWidth, int windowHeight);
+    void UpdatePosture(const PoseControls&,const CharacterLocomotion&,bool playing,bool ik,int width,int height);
     void Record(VkCommandBuffer) const;
     static float Scale(int width, int height);
 

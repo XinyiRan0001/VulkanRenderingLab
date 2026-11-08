@@ -34,8 +34,12 @@ int main()
         c.playing = true;
         c.time = 1.75;
         c.speed = 1;
+        c.discontinuity = false;
         c.Advance(.5);
-        Require(c.time == .25, "loop wrap");
+        Require(c.time == .25 && c.discontinuity, "loop wrap must reset motion history");
+        c.discontinuity = false;
+        c.Advance(4.5);
+        Require(c.time == .75 && c.discontinuity, "multi-loop frame must reset even when time increases");
         c.Activate(AnimationControls::Next);
         Require(c.clip == 1 && c.time == 0 && c.discontinuity, "clip change");
         c.Activate(AnimationControls::Next);

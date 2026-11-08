@@ -18,6 +18,7 @@ class GpuSkinning
                 Buffer &output, bool verify, glm::mat4 placement=glm::mat4(1));
     ~GpuSkinning();
     void Update(size_t clip, float seconds, bool loop=true);
+    void UpdatePose(RigPose pose);
     void SetDualQuaternion(bool enabled);
     void SetSurfaceNormals(bool enabled);
     void Record(VkCommandBuffer) const;

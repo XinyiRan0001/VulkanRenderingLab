@@ -60,7 +60,12 @@ struct AnimationControls
         if (time >= Duration())
         {
             if (loop)
+            {
                 time = std::fmod(time, Duration());
+                // Looping can teleport a procedural root path. This also covers
+                // long frames that cross multiple cycles without time decreasing.
+                discontinuity = true;
+            }
             else
             {
                 time = Duration();

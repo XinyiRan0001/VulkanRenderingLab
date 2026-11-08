@@ -1,4 +1,5 @@
 #pragma once
+#include "PoseControls.h"
 
 #define GLFW_INCLUDE_VULKAN
 
@@ -43,6 +44,8 @@ class HiZ;
 class ScenePrepass;
 class HiZInspector;
 class FrustumDebug;
+class LegIK;
+class CharacterLocomotion;
 class GraphicsPipeline;
 class AnimationPanel;
 class RayQueryReflections;
@@ -60,7 +63,7 @@ class SkyboxPipeline;
 class VulkanContext
 {
 public:
-    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false, bool halfAo=false, bool aoMotionScene=false, const std::string& animatedPath="", bool rayScene=false, bool verifyRay=false, bool roughRayScene=false);
+    explicit VulkanContext(Window& window, const std::string& scenePath = "", uint32_t stressCount = 0, bool verifyCulling = false, bool occlusionScene = false, bool mixedScene = false, bool verifyPrepass = false, bool halfAo=false, bool aoMotionScene=false, const std::string& animatedPath="", bool rayScene=false, bool verifyRay=false, bool roughRayScene=false, const std::string& legIkSide="");
     ~VulkanContext();
     void UpdateUniformBuffer();
     void ConfigurePrepass(int mode,float range=10.f);
@@ -72,10 +75,15 @@ public:
     void SetMotionTestOffset(float offset);
     void SetAoBoxOffset(float offset);
     void SetAnimationClip(const std::string& name);
+    void SetLegIkEnabled(bool enabled);
+    void SetSkeletonDebug(bool enabled){m_ControlDebug=enabled;}
     void SetDualQuaternionSkinning(bool enabled);
     void SetSurfaceSkinningNormals(bool enabled);
     void SetAnimationTime(float seconds){m_AnimationControls.Seek(seconds);}
-    void AdvanceAnimation(double seconds){if(m_AnimationRig)m_AnimationControls.Advance(seconds);}
+    void AdvanceAnimation(double seconds);
+    void RunPosePanelTest(int frame);
+    void SetPostureConfigPath(const std::string& path){m_PoseControls.configPath=path;}
+    void SetCharacterControlInput(glm::vec3 direction){m_ControlTestInput=direction;m_ControlTestOverride=true;}
     AnimationControls* Playback(){return m_AnimationRig?&m_AnimationControls:nullptr;}
     void SetRayReflections(bool enabled,int debug=0);
     void SetMirrorStyles(bool enabled);
@@ -113,6 +121,15 @@ private:
     std::unique_ptr<AnimationRig> m_AnimationRig;
     std::unique_ptr<GpuSkinning> m_Skinning;
     std::unique_ptr<AnimationPanel> m_AnimationPanel;
+    std::unique_ptr<LegIK> m_LegIk;
+    std::unique_ptr<CharacterLocomotion> m_CharacterControl;
+    glm::vec3 m_ControlTestInput{};
+    bool m_ControlTestOverride=false,m_ControlDebug=false;
+    PoseControls m_PoseControls;
+    void ApplyPosture();
+    std::unique_ptr<FrustumDebug> m_LegIkOverlay;
+    glm::mat4 m_CharacterPlacement{1};
+    bool m_LegIkEnabled=true,m_VerifyLegIk=false;
     AnimationControls m_AnimationControls;
     bool AnimationPointer(double x,double y,int action);
     size_t m_AnimationClip=0;

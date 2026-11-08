@@ -121,6 +121,7 @@ int main(int argc, char **argv)
         int aoSamples = 32;
         int width = 1280, height = 720, resizeAfter = 0, resizeWidth = 1024, resizeHeight = 768;
         std::string scenePath;
+        std::string legIkSide;bool legIkCycle=false,walkControlsTest=false,characterControlTest=false,posePanelTest=false,showBones=false;
         std::string animatedPath, animationName = "Idle", skinningMode = "dual-quaternion";
         std::string skinningNormals = "surface";
         bool animationControlsTest=false, animationPanel=true;
@@ -293,6 +294,12 @@ int main(int argc, char **argv)
                 animatedPath = argv[++i];
                 prepassMode = 7;
             }
+            else if (option == "--leg-ik" && i+1<argc){legIkSide=argv[++i];if(legIkSide!="left" && legIkSide!="right" && legIkSide!="both" && legIkSide!="walk" && legIkSide!="control")throw std::runtime_error("Leg IK side must be left|right|both|walk|control");}
+            else if (option == "--leg-ik-cycle-test")legIkCycle=true;
+            else if (option == "--walk-controls-test")walkControlsTest=true;
+            else if (option == "--character-control-test")characterControlTest=true;
+            else if (option == "--pose-panel-test"){posePanelTest=true;characterControlTest=true;}
+            else if (option == "--show-bones")showBones=true;
             else if (option == "--animation" && i + 1 < argc)
                 animationName = argv[++i];
             else if (option == "--reflection-temporal-cycle-test")reflectionTemporalCycle=true;
@@ -422,7 +429,7 @@ int main(int argc, char **argv)
                     "Usage: VulkanRenderingLab [--ray-query-scene | --rough-reflection-scene] [--verify-ray-query] "
                     "[--reflection-samples 1..256] [--reflection-temporal on|off] [--reflection-temporal-cycle-test] [--reflection-reference] [--reflection-furnace] [--reflection-dump prefix] [--reflection-hit-guidance on|off] [--reflection-denoise on|off] [--ray-reflections on|off] [--mirror-styles on|off] [--ray-view 0..2] [--ray-query-cycle-test] "
                     "[--inspect-animation path.glb] [--animated-scene path.glb] "
-                    "[--animation name] [--animation-time seconds] [--skinning linear|dual-quaternion] "
+                    "[--leg-ik left|right|both|walk|control] [--leg-ik-cycle-test] [--walk-controls-test] [--character-control-test] [--pose-panel-test] [--show-bones] [--animation name] [--animation-time seconds] [--skinning linear|dual-quaternion] "
                     "[--skinning-normals surface|transformed] "
                     "[--verify-skinning] [--motion-view] "
                     "[--verify-motion] [--ssao] [--ssao-blurred] "
@@ -529,6 +536,14 @@ int main(int argc, char **argv)
                                       motionInstanceTest || aoBoxStep || !aoTimingPath.empty()))
             throw std::runtime_error(
                 "Animated scene is standalone; no stress/other scene/instance tests/timing");
+        if(!legIkSide.empty() && (animatedPath.empty() || animationName!="Idle" || animationControlsTest))
+            throw std::runtime_error("Leg IK requires --animated-scene and uses a fixed Idle base; omit other --animation clips and animation-controls-test");
+        if(legIkCycle && (legIkSide.empty() || frameLimit<6))throw std::runtime_error("Leg IK cycle needs --leg-ik and --frames >=6");
+        if(showBones && legIkSide.empty())throw std::runtime_error("--show-bones requires --leg-ik");
+        if(posePanelTest && (legIkSide!="control" || frameLimit<40))throw std::runtime_error("Pose panel test needs --leg-ik control and --frames >=40");
+        if(characterControlTest && (legIkSide!="control" || frameLimit<1))throw std::runtime_error("Character test needs --leg-ik control and --frames");
+        if(legIkSide=="control" && (animationFrozen>=0 || legIkCycle))throw std::runtime_error("Interactive control uses live movement, not animation-time or IK cycle tests");
+        if(walkControlsTest && (legIkSide!="walk" || frameLimit<9 || legIkCycle))throw std::runtime_error("Walk controls test needs --leg-ik walk, --frames >=9 and no IK cycle");
         if(reflectionReference){
             if(!roughRayScene)throw std::runtime_error("Reflection reference requires --rough-reflection-scene");
             reflectionSamples=256;reflectionDenoise=false;reflectionTemporal=false;paused=true;cameraSweep=0;
@@ -545,20 +560,22 @@ int main(int argc, char **argv)
         if(animationControlsTest && (animatedPath.empty() || frameLimit<13))
             throw std::runtime_error("--animation-controls-test requires --animated-scene and --frames >=13");
         if (!animatedPath.empty() && !rayScene && !yawSpecified)
-            yaw = 90.f;
+            yaw = legIkSide.empty()?90.f:legIkSide=="right"?45.f:135.f;
         Window window(width, height, "Vulkan Rendering Lab");
         auto createContext = [&]() {
             auto result = std::make_unique<VulkanContext>(window, scenePath, stressCount, verifyCulling,
                                                           occlusionScene, mixedScene, verifyPrepass, halfAo,
-                                                          aoMotionScene, animatedPath,rayScene,verifyRay,roughRayScene);
+                                                          aoMotionScene, animatedPath,rayScene,verifyRay,roughRayScene,legIkSide);
             if(rayScene){result->SetRayReflections(rayEnabled,rayView);result->SetMirrorStyles(mirrorStyles);result->SetReflectionDenoise(reflectionDenoise);result->SetReflectionHitGuidance(reflectionHitGuidance);result->ConfigureReflectionSampling(reflectionSamples,reflectionDump,reflectionFurnace);result->SetReflectionTemporal(reflectionTemporal);}
             if (!animatedPath.empty())
             {
-                result->SetAnimationClip(animationName);
+                if(legIkSide.empty())result->SetAnimationClip(animationName);
                 result->SetDualQuaternionSkinning(skinningMode == "dual-quaternion");
                 result->SetSurfaceSkinningNormals(skinningNormals == "surface");
                 if(animationFrozen>=0)result->SetAnimationTime(animationFrozen);
-                result->Playback()->visible=animationPanel;
+                result->Playback()->visible=animationPanel && legIkSide!="control";
+                if(posePanelTest)result->SetPostureConfigPath("build/pose-panel-validation/session.cfg");
+                result->SetSkeletonDebug(showBones);
             }
             result->SetOcclusion(occlusion);
             result->SetCulling(culling, verifyCulling);
@@ -702,6 +719,7 @@ int main(int argc, char **argv)
                 if(frames==5)context->ConfigureReflectionSampling(reflectionSamples,reflectionDump,reflectionFurnace);
                 if(frames==6)context->SetReflectionHitGuidance(false);
             }
+            if(legIkCycle)context->SetLegIkEnabled(frames<2 || frames>=4);
             if(rayCycle){const bool enabled=frames%3!=1;const int view=frames%4==3?2:0;context->SetRayReflections(enabled,view);std::cout<<"[Ray Query Cycle] frame="<<frames<<" enabled="<<enabled<<" view="<<view<<'\n';}
             if(animationControlsTest){
                 auto& c=*context->Playback();
@@ -717,7 +735,32 @@ int main(int argc, char **argv)
                 if(frames==11)c.visible=false;
                 if(frames==12)c.visible=true;
             }
-            context->AdvanceAnimation(frameLimit?(frames?1./60.:0.):deltaTime);
+            if(walkControlsTest){
+                auto& c=*context->Playback();
+                if(frames==0){c.Seek(7.99);c.playing=true;c.loop=false;}
+                if(frames==3){c.Activate(AnimationControls::Restart);c.playing=true;}
+                if(frames==4)c.Activate(AnimationControls::Faster);
+                if(frames==5)c.Seek(3.2);
+                if(frames==6){
+                    // Seed the test without Seek's reset flag so AdvanceAnimation
+                    // must detect the actual loop wrap itself.
+                    c.time=7.99;c.discontinuity=false;c.loop=true;c.playing=true;
+                }
+                if(frames==8){c.Seek(8);c.loop=false;}
+            }
+            if(posePanelTest)context->RunPosePanelTest(frames);
+            if(characterControlTest){
+                const glm::vec3 input=frames<35?glm::vec3(1,0,0):frames<70?glm::vec3(0,0,-1):frames<90?glm::vec3(-1,0,0):glm::vec3(0);
+                context->SetCharacterControlInput(input);
+                if(!posePanelTest && frames==20)context->Playback()->playing=false;
+                if(!posePanelTest && frames==23)context->Playback()->playing=true;
+            }
+            context->AdvanceAnimation(characterControlTest?1./30.:frameLimit?(frames?1./60.:0.):deltaTime);
+            if(walkControlsTest){
+                const auto& c=*context->Playback();
+                std::cout<<"[Walk Controls] frame="<<frames<<" time="<<std::setprecision(10)<<c.time
+                    <<" playing="<<c.playing<<" loop="<<c.loop<<" speed="<<c.speed<<" reset="<<c.discontinuity<<std::endl;
+            }
             if(animationControlsTest){const auto& c=*context->Playback();std::ostringstream state;state<<std::setprecision(10)<<"[Animation Controls] frame="<<frames<<" clip="<<c.clip<<" time="<<c.time<<" speed="<<c.speed<<" playing="<<c.playing<<" dual="<<c.dual<<" surface="<<c.surface<<" panel="<<c.visible<<'\n';std::cout<<state.str();}
             context->UpdateUniformBuffer();
             context->DrawFrame();

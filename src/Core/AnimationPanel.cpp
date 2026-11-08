@@ -1,4 +1,5 @@
 #include "AnimationPanel.h"
+#include "CharacterLocomotion.h"
 #include "ShaderUtils.h"
 #include <array>
 #include <cctype>
@@ -36,7 +37,7 @@ const std::map<char, std::array<int, 7>> glyphs = {
     {'.', {0, 0, 0, 0, 0, 12, 12}},      {':', {0, 12, 12, 0, 12, 12, 0}},
     {'/', {1, 2, 2, 4, 8, 8, 16}},       {'-', {0, 0, 0, 31, 0, 0, 0}},
     {'+', {0, 4, 4, 31, 4, 4, 0}},       {'<', {2, 4, 8, 16, 8, 4, 2}},
-    {'>', {8, 4, 2, 1, 2, 4, 8}}};
+    {'>', {8, 4, 2, 1, 2, 4, 8}}, {'%', {17,18,2,4,8,9,17}}};
 constexpr size_t MaxVertices = 60000;
 } // namespace
 AnimationPanel::AnimationPanel(const PhysicalDevice &physical, const LogicalDevice &device, VkRenderPass pass,
@@ -223,4 +224,41 @@ void AnimationPanel::Record(VkCommandBuffer cmd) const
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buffer, &offset);
     vkCmdDrawIndirect(cmd, m_Draw->GetHandle(), 0, 1, sizeof(VkDrawIndirectCommand));
+}
+
+void AnimationPanel::UpdatePosture(const PoseControls& c,const CharacterLocomotion& controller,bool playing,bool ik,int width,int height){
+    m_Data.clear();m_Width=float(std::max(1,width));m_Height=float(std::max(1,height));
+    m_Scale=PoseControls::Scale(width,height);
+    if(c.visible){
+        const glm::vec4 white(.8f,.86f,.95f,1),muted(.3f,.4f,.52f,1),active(.03f,.25f,.32f,1),inactive(.04f,.055f,.075f,1),warning(.95f,.55f,.2f,1);
+        Rect(0,0,PoseControls::Width,PoseControls::Height,{.012f,.02f,.033f,1});
+        Text(12,12,"POSTURE / SUPPORT",white);Text(12,28,"ARROWS MOVE  ENTER PAUSE",muted);
+        const auto button=[&](float x,float y,float w,const char* label,bool selected){Rect(x,y,w,26,selected?active:inactive);Text(x+6,y+6,label,white);};
+        button(12,42,96,playing?"PAUSE":"PLAY",playing);
+        button(116,42,96,"DEFAULT",false);button(220,42,92,c.custom?"POSE ON":"BASE",c.custom);
+        for(size_t i=0;i<PoseSettings::Count;++i){
+            const auto& slider=PoseSettings::sliders[i];const float y=PoseControls::RowTop+i*PoseControls::RowHeight;
+            Text(12,y,slider.label,c.custom?white:muted);
+            char value[32];std::snprintf(value,sizeof(value),slider.seconds?"%.2F S":slider.degrees?"%.1F DEG":"%.1F%%",c.settings.values[i]*((slider.degrees||slider.seconds)?1.f:100.f));
+            Text(210,y,value,c.custom?white:muted);
+            Rect(12,y+20,300,8,inactive);
+            const float fraction=(c.settings.values[i]-slider.minimum)/(slider.maximum-slider.minimum);
+            Rect(12,y+20,300*fraction,8,active);Rect(10+300*fraction,y+17,4,14,white);
+        }
+        button(12,PoseControls::ActionTop,96,"SAVE",false);button(116,PoseControls::ActionTop,96,"LOAD",false);
+        button(220,PoseControls::ActionTop,92,controller.Settings().autoReach?"AUTO":"MANUAL",controller.Settings().autoReach);
+        button(12,PoseControls::ActionTop+32,300,"STAND / APPLY WIDTH",false);
+        const auto& d=controller.PostureDiagnostics();char text[64];
+        std::snprintf(text,sizeof(text),"ERR %.6F",d.contactError);Text(12,PoseControls::ActionTop+76,text,d.contactError>.0003f?warning:white);
+        Text(204,PoseControls::ActionTop+76,!ik?"IK OFF":d.clamped?"LIMIT":"OK",!ik||d.clamped?warning:white);
+        std::snprintf(text,sizeof(text),"REACH L %.3F R %.3F",d.reach[0],d.reach[1]);Text(12,PoseControls::ActionTop+94,text,d.clamped?warning:muted);
+        std::snprintf(text,sizeof(text),"AUTO Y %+.4F",d.automaticHeight);Text(12,PoseControls::ActionTop+112,text,muted);
+        std::snprintf(text,sizeof(text),"FOOT L %s R %s",CharacterLocomotion::PhaseName(d.phase[0]),CharacterLocomotion::PhaseName(d.phase[1]));
+        Text(12,PoseControls::ActionTop+148,text,muted);
+        std::snprintf(text,sizeof(text),"KNEE L %.1F R %.1F",d.kneeFlex[0],d.kneeFlex[1]);Text(12,PoseControls::ActionTop+130,text,white);
+        Text(12,PoseControls::ActionTop+166,c.status.substr(0,25),white);Text(12,PoseControls::ActionTop+186,"F8 PANEL  F12 BONES",muted);
+    }
+    if(m_Data.size()>MaxVertices)throw std::runtime_error("Posture panel vertex capacity exceeded");
+    if(!m_Data.empty())m_Vertices->UploadData(m_Data.data(),m_Data.size()*sizeof(Vertex));
+    VkDrawIndirectCommand draw{uint32_t(m_Data.size()),1,0,0};m_Draw->UploadData(&draw,sizeof(draw));
 }

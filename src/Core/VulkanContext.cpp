@@ -1,3 +1,5 @@
+#include "CharacterLocomotion.h"
+#include "LegIK.h"
 #include "RoughReflectionFilter.h"
 #include "VulkanContext.h"
 
@@ -64,7 +66,7 @@ const char* LightingViewName(int mode) {
 }
 }
 
-VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass, bool halfAo, bool aoMotionScene, const std::string& animatedPath, bool rayScene, bool verifyRay, bool roughRayScene)
+VulkanContext::VulkanContext(Window& window, const std::string& scenePath, uint32_t stressCount, bool verifyCulling, bool occlusionScene, bool mixedScene, bool verifyPrepass, bool halfAo, bool aoMotionScene, const std::string& animatedPath, bool rayScene, bool verifyRay, bool roughRayScene, const std::string& legIkSide)
     : m_Window(window)
 {
     // =========================================================
@@ -245,11 +247,20 @@ m_GraphicsPipeline =
     // =========================================================
 
     MeshData combinedMesh;
-    const glm::mat4 characterPlacement=rayScene?glm::translate(glm::mat4(1),glm::vec3(0,.07f,.1f))*glm::rotate(glm::mat4(1),glm::radians(-90.f),glm::vec3(0,1,0)):glm::mat4(1);
+    glm::mat4 characterPlacement=rayScene?glm::translate(glm::mat4(1),glm::vec3(0,.07f,.1f))*glm::rotate(glm::mat4(1),glm::radians(-90.f),glm::vec3(0,1,0)):glm::mat4(1);
+    m_CharacterPlacement=characterPlacement;
+    m_VerifyLegIk=verifyPrepass;
     m_IsGltfScene = !scenePath.empty() || aoMotionScene || !animatedPath.empty() || rayScene;
     if (m_IsGltfScene) {
         if(!animatedPath.empty()){
-            m_AnimationRig=std::make_unique<AnimationRig>(AnimationRig::Load(animatedPath));combinedMesh=GpuSkinning::BuildMesh(*m_AnimationRig,GLTFLoader::Load(animatedPath,true),!rayScene,characterPlacement);
+            m_AnimationRig=std::make_unique<AnimationRig>(AnimationRig::Load(animatedPath));
+            if(!legIkSide.empty()){
+                m_LegIk=std::make_unique<LegIK>(*m_AnimationRig,legIkSide=="control"?"both":legIkSide);
+                if(legIkSide=="control")m_CharacterControl=std::make_unique<CharacterLocomotion>(*m_LegIk);
+                characterPlacement[3].y=-m_LegIk->GroundHeight();
+                m_CharacterPlacement=characterPlacement;
+            }
+            combinedMesh=GpuSkinning::BuildMesh(*m_AnimationRig,GLTFLoader::Load(animatedPath,true),!rayScene,characterPlacement);
             if(rayScene){auto room=CreateRayQueryScene(true, roughRayScene);uint32_t vertexBase=uint32_t(combinedMesh.vertices.size()),indexBase=uint32_t(combinedMesh.indices.size());int materialBase=int(combinedMesh.materials.size());combinedMesh.vertices.insert(combinedMesh.vertices.end(),room.vertices.begin(),room.vertices.end());for(auto index:room.indices)combinedMesh.indices.push_back(index+vertexBase);for(auto sub:room.subMeshes){sub.firstIndex+=indexBase;sub.materialId+=materialBase;combinedMesh.subMeshes.push_back(sub);}combinedMesh.materials.insert(combinedMesh.materials.end(),room.materials.begin(),room.materials.end());}
         }
         else combinedMesh = rayScene?CreateRayQueryScene(false, roughRayScene):aoMotionScene ? CreateAoMotionScene() : GLTFLoader::Load(scenePath);
@@ -1265,6 +1276,12 @@ m_GraphicsPipeline =
 
     if(m_AnimationRig){
         for(const auto& clip:m_AnimationRig->clips)m_AnimationControls.clips.push_back({clip.name,clip.end-clip.start});
+        if(!legIkSide.empty()){
+            m_AnimationControls.clips={{legIkSide=="control"?"ARROWS MOVE":legIkSide=="walk"?"WALK FORWARD":legIkSide=="both"?"MARCH IN PLACE":legIkSide=="left"?"LEG IK LEFT":"LEG IK RIGHT",legIkSide=="walk"?LegIK::WalkDuration:4.}};
+            if(legIkSide=="walk")m_AnimationControls.loop=false;
+            if(legIkSide=="control"){m_AnimationControls.clips={{"ARROWS MOVE",0.}};m_AnimationControls.visible=false;}
+            m_LegIkOverlay=std::make_unique<FrustumDebug>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent(),uint32_t(48+2*m_AnimationRig->nodes.size()));
+        }
         m_AnimationPanel=std::make_unique<AnimationPanel>(*m_PhysicalDevice,*m_LogicalDevice,m_RenderPass->GetHandle(),m_Swapchain->GetExtent());
     }
     m_CommandManager =
@@ -1284,7 +1301,7 @@ m_GraphicsPipeline =
             *m_DescriptorManager,
             combinedMesh.subMeshes,
             combinedMesh.materials,
-            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle(),m_Skinning.get(),m_AnimationPanel.get(),m_Reflections.get(),m_RoughFilter.get()
+            m_GpuCulling.get(),m_HiZ.get(),m_FrustumDebug.get(),m_HiZInspector.get(),m_ScenePrepass.get(),m_DepthImage->GetHandle(),m_Skinning.get(),m_AnimationPanel.get(),m_Reflections.get(),m_RoughFilter.get(),m_LegIkOverlay.get()
         );
 
     std::cout
@@ -1360,7 +1377,7 @@ void VulkanContext::SetupCameraControls()
     );
 
     glfwSetWindowFocusCallback(glfwWindow,[](GLFWwindow* window,int focused){
-        if(!focused){auto* context=static_cast<VulkanContext*>(glfwGetWindowUserPointer(window));if(context){context->m_IsDragging=false;context->m_AnimationControls.scrubbing=false;}}
+        if(!focused){auto* context=static_cast<VulkanContext*>(glfwGetWindowUserPointer(window));if(context){context->m_IsDragging=false;context->m_AnimationControls.scrubbing=false;context->m_PoseControls.dragging=-1;}}
     });
 
     glfwSetCursorPosCallback(
@@ -1372,6 +1389,7 @@ void VulkanContext::SetupCameraControls()
                     glfwGetWindowUserPointer(window)
                     );
 
+            if(context && context->m_CharacterControl && context->m_PoseControls.dragging>=0){context->AnimationPointer(mouseX,mouseY,GLFW_REPEAT);return;}
             if(context && context->m_AnimationControls.scrubbing){context->AnimationPointer(mouseX,mouseY,GLFW_REPEAT);return;}
             if (context == nullptr || context->m_AoTimingActive ||
                 !context->m_IsDragging)
@@ -1421,6 +1439,11 @@ void VulkanContext::SetupCameraControls()
                 return;
             }
 
+            if(context->m_CharacterControl){
+                double x,y;glfwGetCursorPos(window,&x,&y);int w,h;glfwGetWindowSize(window,&w,&h);
+                const float s=PoseControls::Scale(w,h);
+                if(context->m_PoseControls.Contains(float((x-12)/s),float((y-12)/s)))return;
+            }
             if(context->m_AnimationRig){double x,y;glfwGetCursorPos(window,&x,&y);int w,h;glfwGetWindowSize(window,&w,&h);float s=AnimationPanel::Scale(w,h);if(context->m_AnimationControls.Contains(float((x-12)/s),float((y-12)/s)))return;}
             context->m_CameraDistance -=
                 static_cast<float>(yOffset) *
@@ -1452,6 +1475,12 @@ void VulkanContext::SetupCameraControls()
                 return;
             }
 
+            if(context->m_CharacterControl){
+                if(key==GLFW_KEY_LEFT || key==GLFW_KEY_RIGHT || key==GLFW_KEY_UP || key==GLFW_KEY_DOWN)return;
+                if(action==GLFW_PRESS && key==GLFW_KEY_F8){context->m_PoseControls.visible=!context->m_PoseControls.visible;context->m_PoseControls.dragging=-1;return;}
+                if(action==GLFW_PRESS && key==GLFW_KEY_F12){context->m_ControlDebug=!context->m_ControlDebug;return;}
+                if(action==GLFW_PRESS && key==GLFW_KEY_HOME){context->m_CharacterControl->Reset();context->m_AnimationControls.discontinuity=true;return;}
+            }
             if(context->m_AnimationRig && action==GLFW_PRESS){
                 auto& c=context->m_AnimationControls;
                 if(key==GLFW_KEY_F12){c.visible=!c.visible;c.scrubbing=false;return;}
@@ -1464,6 +1493,7 @@ void VulkanContext::SetupCameraControls()
                 if(key==GLFW_KEY_EQUAL){c.Activate(AnimationControls::Faster);return;}
             }
             if (action == GLFW_PRESS) {
+                if(context->m_LegIk && key==GLFW_KEY_Y){context->SetLegIkEnabled(!context->m_LegIkEnabled);return;}
                 if(context->m_RoughFilter && key==GLFW_KEY_Q){context->SetReflectionTemporal(!context->m_RoughFilter->TemporalEnabled());return;}
                 if(context->m_RoughFilter && key==GLFW_KEY_N){context->SetReflectionHitGuidance(!context->m_RoughFilter->HitGuidance());return;}
                 if(context->m_RoughFilter && key==GLFW_KEY_B){context->SetReflectionDenoise(!context->m_Reflections->Filtered());return;}
@@ -1776,6 +1806,12 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
               << " [F11] view=" << m_Reflections->Debug();
     else
         title << " | Raster";
+    if(m_CharacterControl)title<<" | ARROWS MOVE | Enter pause | Home reset | F8 posture | F12 bones";
+    if(m_LegIk && !m_CharacterControl){
+        title<<" | IK "<<m_LegIk->Side()<<" "<<(m_LegIkEnabled?"ON":"OFF")<<" "<<(m_LegIk->Stance()?"STANCE":"SWING");
+        if(m_LegIk->LegCount()==2)title<<" R:"<<(m_LegIk->Leg(1).Stance()?"STANCE":"SWING");
+        title<<" [Y] error="<<m_LegIk->Error();
+    }
     if(m_RoughFilter)title<<" | Accum "<<(m_RoughFilter->TemporalEnabled()?"ON":"OFF")<<" H="<<m_RoughFilter->HistoryFrames()<<" [Q] | Spatial "<<(m_Reflections->Filtered()?"ON":"OFF")<<" [B] Hit "<<(m_RoughFilter->HitGuidance()?"ON":"OFF")<<" [N] "<<m_RoughFilter->Samples()<<" spp";
     title
         << " | "
@@ -1794,7 +1830,7 @@ void VulkanContext::UpdateWindowTitle(double deltaTime)
         << " | " << LightingViewName(m_LightingView)
         << " | IBL " << (m_EnableEnvironmentLighting ? "ON" : "OFF");
 
-    if(m_AnimationRig)title<<" | Animation "<<m_AnimationRig->clips[m_AnimationClip].name<<" "<<(m_AnimationControls.playing?"PLAY":"PAUSE")<<" "<<m_AnimationControls.time<<"s "<<m_AnimationControls.speed<<"x [Enter/F12]";
+    if(m_AnimationRig)title<<" | Animation "<<m_AnimationControls.clips.at(m_AnimationControls.clip).name<<" "<<(m_AnimationControls.playing?"PLAY":"PAUSE")<<" "<<m_AnimationControls.time<<"s "<<m_AnimationControls.speed<<"x [Enter/F12]";
     if (m_GpuCulling) title << " | Cull " << (m_CullingEnabled ? "ON " : "OFF ")
         << m_GpuCulling->VisibleCount() << "/" << m_GpuCulling->TotalCount();
     if(m_ScenePrepass && m_ScenePrepass->Enabled()) title << " | Prepass " << m_ScenePrepass->Mode() << " [F4]";
@@ -3047,6 +3083,7 @@ VulkanContext::~VulkanContext()
     if (m_LogicalDevice) vkDeviceWaitIdle(m_LogicalDevice->GetHandle());
     m_Renderer.reset();
     m_CommandManager.reset();
+    m_LegIkOverlay.reset();
     m_AnimationPanel.reset();
     m_RoughFilter.reset();
     m_DescriptorManager.reset();
@@ -3094,6 +3131,8 @@ VulkanContext::~VulkanContext()
     m_UniformBuffer.reset();
     m_IndexBuffer.reset();
     m_Skinning.reset();
+    m_CharacterControl.reset();
+    m_LegIk.reset();
     m_AnimationRig.reset();
     m_VertexBuffer.reset();
 
@@ -3536,8 +3575,58 @@ void VulkanContext::UpdateUniformBuffer()
             ResetMotionHistory();c.discontinuity=false;
         }
         m_AnimationClip=c.clip;m_AnimationTime=float(c.time);
-        m_Skinning->Update(m_AnimationClip,m_AnimationTime,false);
-        int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);m_AnimationPanel->Update(c,w,h);
+        if(m_LegIk){
+            if(m_CharacterControl)m_CharacterControl->Update(0,{},m_LegIkEnabled);
+            m_Skinning->UpdatePose(m_CharacterControl?m_CharacterControl->Pose():m_LegIk->Sample(m_AnimationTime,m_LegIkEnabled));
+            if(m_CharacterControl && m_VerifyLegIk){
+                const auto& state=m_CharacterControl->Current();
+                std::ostringstream diagnostic;
+                diagnostic<<std::setprecision(9)<<"[Character Control] position="<<state.position.x<<","<<state.position.z
+                    <<" yaw="<<state.yaw<<" speed="<<state.speed<<" blend="<<state.blend
+                    <<" active="<<state.active<<" steps="<<state.steps<<" distance="<<state.distance;
+                std::cout<<diagnostic.str()<<std::endl;
+                const auto& d=m_CharacterControl->PostureDiagnostics();
+                std::ostringstream posture;
+                posture<<std::setprecision(9)<<"[Posture Verify] custom="<<m_PoseControls.custom<<" auto="<<m_CharacterControl->Settings().autoReach
+                    <<" paused="<<!c.playing<<" visible="<<m_PoseControls.visible<<" error="<<d.contactError
+                    <<" reach="<<d.reach[0]<<","<<d.reach[1]<<" correction="<<d.automaticHeight<<" clamped="<<d.clamped;
+                for(float value:m_CharacterControl->Settings().values)posture<<" "<<value;
+                std::cout<<posture.str()<<std::endl;
+                std::ostringstream roll;
+                roll<<std::setprecision(9)<<"[Foot Roll Verify] left="<<CharacterLocomotion::PhaseName(d.phase[0])
+                    <<" right="<<CharacterLocomotion::PhaseName(d.phase[1])<<" pitch="<<d.pitch[0]<<","<<d.pitch[1]
+                    <<" clearance="<<d.clearance[0]<<","<<d.clearance[1];
+                std::cout<<roll.str()<<std::endl;
+                std::ostringstream rest;
+                rest<<std::setprecision(9)<<"[Rest Pose Verify] width="<<d.stanceWidth<<" fore_aft="<<d.bodyForeAft<<" tilt="<<d.bodyTilt<<" knees="<<d.kneeFlex[0]<<","<<d.kneeFlex[1];
+                std::cout<<rest.str()<<std::endl;
+            }
+            if(m_VerifyLegIk){
+                for(size_t i=0;i<m_LegIk->LegCount();++i){
+                    const auto& leg=m_LegIk->Leg(i);
+                    const auto side=m_LegIk->LegCount()==2 && i==0?"left":leg.Side();
+                    std::cout<<"[Leg IK Verify] side="<<side<<" enabled="<<m_LegIkEnabled
+                        <<" time="<<m_AnimationTime<<" target_error="<<leg.Error()<<" clamped="<<leg.Clamped()<<" lengths=OK"<<std::endl;
+                    std::cout<<"[Leg Contact Verify] phase="<<(leg.Stance()?"stance":"swing")
+                        <<" error="<<glm::length(leg.ContactPosition()-leg.ContactTarget())
+                        <<" clearance="<<leg.ContactPosition().y-leg.GroundHeight()<<std::endl;
+                }
+                if(m_LegIk->LegCount()==2){
+                    const auto offset=m_LegIk->PelvisOffset();
+                    std::cout<<"[Gait Verify] enabled="<<m_LegIkEnabled<<" left="<<m_LegIk->Stance()
+                        <<" right="<<m_LegIk->Leg(1).Stance()<<" pelvis="<<offset.x<<","<<offset.y<<","<<offset.z<<std::endl;
+                    if(m_LegIk->Walking()){
+                        const auto root=m_LegIk->RootOffset();
+                        std::ostringstream state;
+                        state<<std::setprecision(9)<<"[Walk Verify] root="<<root.x<<","<<root.y<<","<<root.z
+                            <<" distance="<<glm::length(root)<<" duration="<<LegIK::WalkDuration;
+                        std::cout<<state.str()<<std::endl;
+                    }
+                }
+            }
+        }else m_Skinning->Update(m_AnimationClip,m_AnimationTime,false);
+        int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);if(m_CharacterControl)m_AnimationPanel->UpdatePosture(m_PoseControls,*m_CharacterControl,c.playing,m_LegIkEnabled,w,h);
+        else m_AnimationPanel->Update(c,w,h);
     }
     UniformBufferObject ubo{};
 
@@ -3554,7 +3643,15 @@ void VulkanContext::UpdateUniformBuffer()
     // Orbit camera
     // =========================================================
 
-    const glm::vec3 cameraTarget = m_CameraTarget;
+    glm::vec3 cameraTarget = m_CameraTarget+(m_CharacterControl?glm::vec3(ubo.model*m_CharacterPlacement*glm::vec4(m_CharacterControl->Current().position,0)):glm::vec3(0));
+
+    if(m_CharacterControl && m_PoseControls.visible){
+        int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);
+        const float fraction=(PoseControls::Width*PoseControls::Scale(w,h)+24.f)/std::max(1,w);
+        const auto extent=m_Swapchain->GetExtent();const float aspect=float(extent.width)/std::max(1u,extent.height);
+        const glm::vec3 right(std::cos(m_CameraYaw),0,-std::sin(m_CameraYaw));
+        cameraTarget-=right*(m_CameraDistance*std::tan(glm::radians(22.5f))*aspect*fraction);
+    }
 
     const float cosPitch =
         std::cos(m_CameraPitch);
@@ -3748,13 +3845,67 @@ void VulkanContext::UpdateUniformBuffer()
     const auto& cullingCamera = m_CullingFrozen ? m_FrozenCamera : ubo;
     if(m_ScenePrepass) m_ScenePrepass->Update(ubo,!m_CullingFrozen);
     if(m_RoughFilter)m_RoughFilter->Update(ubo,
-        glm::vec4(float(m_AnimationClip),m_AnimationTime,m_AnimationControls.dual?1.f:0.f,m_AnimationControls.surface?1.f:0.f),
+        glm::vec4(float(m_AnimationClip),m_CharacterControl?float(m_CharacterControl->Current().poseRevision):m_AnimationTime,m_AnimationControls.dual?1.f:0.f,m_AnimationControls.surface?1.f:0.f),
         glm::ivec4(m_Reflections->Enabled()?1:0,m_Reflections->Filtered()?1:0,m_Reflections->Debug(),0));
     if (m_HiZ) m_HiZ->Update(cullingCamera);
     if (m_GpuCulling) m_GpuCulling->Update(cullingCamera,m_CullingEnabled,m_VerifyCulling,m_OcclusionEnabled);
     if (m_HiZInspector) m_HiZInspector->Update(cullingCamera,m_CullingEnabled,m_OcclusionEnabled,m_VerifyCulling);
     if (m_FrustumDebug) m_FrustumDebug->Update(ubo,cullingCamera,m_CullingFrozen,
         m_HiZInspector?m_HiZInspector->SelectedSphere():glm::vec4(0),m_HiZInspector && m_HiZInspector->Enabled());
+    if(m_LegIkOverlay){
+        const bool bilateral=m_LegIk->LegCount()==2;
+        std::vector<glm::vec3> lines;
+        const float radius=.045f;
+        for(size_t legIndex=0;legIndex<m_LegIk->LegCount();++legIndex){
+            const auto& leg=m_LegIk->Leg(legIndex);
+            const auto& pose=leg.LastPose();
+            const glm::vec3 hip(pose.world[leg.Hip()][3]),knee(pose.world[leg.Knee()][3]),foot(pose.world[leg.Foot()][3]);
+            const auto target=leg.ContactTarget(),contact=leg.ContactPosition();
+            if(!m_ControlDebug)lines.insert(lines.end(),{hip,knee,knee,foot});
+            for(auto axis:{glm::vec3(radius,0,0),glm::vec3(0,radius,0),glm::vec3(0,0,radius)}){
+                lines.push_back(target-axis);lines.push_back(target+axis);
+            }
+            const int segments=bilateral?4:8;
+            for(int i=0;i<segments;++i){
+                const float a=6.2831853f*i/segments,b=6.2831853f*(i+1)/segments;
+                lines.push_back(contact+glm::vec3(std::cos(a)*radius*.7f,0,std::sin(a)*radius*.7f));
+                lines.push_back(contact+glm::vec3(std::cos(b)*radius*.7f,0,std::sin(b)*radius*.7f));
+            }
+            lines.push_back(foot);lines.push_back(contact);
+            if(m_CharacterControl){lines.push_back(leg.HeelPosition());lines.push_back(leg.ToePosition());}
+            const auto ground=glm::vec3(target.x,leg.GroundHeight(),target.z);
+            lines.push_back(target);lines.push_back(ground);
+            if(!bilateral){
+                for(auto axis:{glm::vec3(radius*2,0,0),glm::vec3(0,0,radius*2)}){
+                    lines.push_back(ground-axis);lines.push_back(ground+axis);
+                }
+                lines.push_back(knee);lines.push_back(knee+glm::normalize(leg.Pole()-knee)*.2f);
+            }
+        }
+        if(bilateral){
+            const glm::vec3 pelvis(m_LegIk->LastPose().world[m_LegIk->Pelvis()][3]);
+            lines.push_back(pelvis-m_LegIk->PelvisOffset());lines.push_back(pelvis);
+            lines.push_back(pelvis);lines.push_back(glm::vec3(pelvis.x,m_LegIk->GroundHeight(),pelvis.z));
+        }
+        if(m_ControlDebug){
+            // Skin joints and their connecting ancestors form the skeleton;
+            // mesh nodes are excluded from the bone overlay.
+            std::vector<bool> skeleton(m_AnimationRig->nodes.size(),false);
+            for(const auto& skin:m_AnimationRig->skins)for(int joint:skin.joints)
+                for(int node=joint;node>=0;node=m_AnimationRig->nodes[size_t(node)].parent)skeleton[size_t(node)]=true;
+            const auto& pose=m_LegIk->LastPose();size_t segments=0,joints=0;
+            for(size_t node=0;node<skeleton.size();++node)if(skeleton[node]){
+                ++joints;const int parent=m_AnimationRig->nodes[node].parent;
+                if(parent<0 || !skeleton[size_t(parent)])continue;
+                const glm::vec3 a(pose.world[size_t(parent)][3]),b(pose.world[node][3]);
+                if(glm::dot(a-b,a-b)<1e-10f)continue;
+                lines.push_back(a);lines.push_back(b);++segments;
+            }
+            if(m_VerifyLegIk)std::cout<<"[Skeleton Overlay] joints="<<joints<<" segments="<<segments<<" vertices="<<lines.size()<<std::endl;
+        }
+        if(m_CharacterControl && !m_ControlDebug)lines.clear();
+        m_LegIkOverlay->UpdateLines(ubo.proj*ubo.view*ubo.model*m_CharacterPlacement,lines);
+    }
     // Uniform updates and readback happen only after the preceding render fence.
     m_UniformBuffer->UploadData(
         &ubo,
@@ -3921,6 +4072,10 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
     const int mode=m_ScenePrepass->Mode();const float range=m_ScenePrepass->DepthRange();
     const bool inspect=m_HiZInspector && m_HiZInspector->Enabled();
     const int group=inspect?m_HiZInspector->Group():0,selection=inspect?m_HiZInspector->Selection():-1,mip=inspect?m_HiZInspector->Mip():0;
+    const bool legIkEnabled=m_LegIkEnabled;
+    const auto postureControls=m_PoseControls;
+    const auto controllerState=m_CharacterControl?m_CharacterControl->Snapshot():CharacterLocomotion::State{};
+    const auto controlInput=m_ControlTestInput;const bool controlOverride=m_ControlTestOverride,controlDebug=m_ControlDebug;
     const auto animation=m_AnimationControls;
     const bool rayTemporal=m_RoughFilter && m_RoughFilter->TemporalEnabled();
     const bool rayFurnace=m_RoughFilter && m_RoughFilter->Furnace();
@@ -3929,7 +4084,7 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
     const bool rayFiltered=!m_Reflections || m_Reflections->Filtered();
     const bool rayStylized=m_Reflections && m_Reflections->Stylized();
     const bool rayEnabled=m_Reflections && m_Reflections->Enabled();const int rayDebug=m_Reflections?m_Reflections->Debug():0;
-    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug,rayStylized,rayFiltered,rayHitGuidance,raySamples,rayFurnace,rayTemporal](VulkanContext& context) {
+    return [fields,mode,range,inspect,group,selection,mip,ao,planeAware,temporal,varying,historyView,adaptive,animation,rayEnabled,rayDebug,rayStylized,rayFiltered,rayHitGuidance,raySamples,rayFurnace,rayTemporal,legIkEnabled,controllerState,controlInput,controlOverride,controlDebug,postureControls](VulkanContext& context) {
         std::apply([&](const auto&... member) { ((context.*(member.first)=member.second),...); },fields);
         context.m_CommandManager->SetSkyboxEnabled(context.m_EnableSkybox);
         context.ConfigureAo(ao.x,ao.y,int(ao.z),planeAware);
@@ -3939,6 +4094,10 @@ std::function<void(VulkanContext&)> VulkanContext::SaveRuntimeState() const {
         context.SetAoHistoryView(historyView);
         context.SetAdaptiveAo(adaptive);
         context.ConfigureHiZInspector(inspect,selection,mip,group);
+        context.m_LegIkEnabled=legIkEnabled;
+        context.m_PoseControls=postureControls;context.m_PoseControls.dragging=-1;
+        if(context.m_CharacterControl){context.m_CharacterControl->SetPoseSettings(context.m_PoseControls.Effective());context.m_CharacterControl->Restore(controllerState);}
+        context.m_ControlTestInput=controlInput;context.m_ControlTestOverride=controlOverride;context.m_ControlDebug=controlDebug;
         if(context.m_AnimationRig){context.m_AnimationControls=animation;context.m_AnimationControls.scrubbing=false;context.m_AnimationControls.modeDirty=context.m_AnimationControls.discontinuity=true;}
         if(context.m_Reflections){context.SetRayReflections(rayEnabled,rayDebug);context.m_Reflections->SetStylized(rayStylized);context.m_Reflections->SetFiltered(rayFiltered);}
         if(context.m_RoughFilter){context.m_RoughFilter->SetHitGuidance(rayHitGuidance);context.m_RoughFilter->SetSamples(raySamples);context.m_RoughFilter->SetFurnace(rayFurnace);context.m_RoughFilter->SetTemporal(rayTemporal);}
@@ -4000,6 +4159,27 @@ void VulkanContext::SetRayReflections(bool enabled,int debug){
 }
 bool VulkanContext::AnimationPointer(double x,double y,int action){
     if(!m_AnimationPanel)return false;
+    if(m_CharacterControl){
+        auto& panel=m_PoseControls;
+        if(action==GLFW_RELEASE){const bool consumed=panel.dragging>=0;panel.dragging=-1;return consumed;}
+        int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);const float scale=PoseControls::Scale(w,h);
+        const float px=float((x-12)/scale),py=float((y-12)/scale);
+        if(action==GLFW_REPEAT){if(!panel.Drag(px))return false;ApplyPosture();return true;}
+        if(!panel.Contains(px,py))return false;
+        try{
+            const auto command=panel.Press(px,py);
+            if(command==PoseControls::Pause)m_AnimationControls.playing=!m_AnimationControls.playing;
+            if(command==PoseControls::Defaults){panel.settings=PoseSettings{};panel.custom=true;panel.status="DEFAULTS RESTORED";}
+            if(command==PoseControls::Compare){panel.custom=!panel.custom;panel.status=panel.custom?"CUSTOM POSE":"BASELINE POSE";}
+            if(command==PoseControls::Stand){m_AnimationControls.playing=false;m_CharacterControl->FitStandingPose();panel.status="STANCE APPLIED - PAUSED";m_AnimationControls.discontinuity=true;}
+            if(command==PoseControls::Reach){panel.custom=true;panel.settings.autoReach=!panel.settings.autoReach;panel.status=panel.settings.autoReach?"AUTO REACH ON":"MANUAL - CHECK CONTACT";}
+            if(command==PoseControls::Save){panel.settings.Save(panel.configPath);panel.status="CONFIG SAVED";}
+            if(command==PoseControls::Load){panel.settings=PoseSettings::Load(panel.configPath);panel.custom=true;panel.status="CONFIG LOADED";}
+            if(panel.dragging>=0){panel.custom=true;panel.status="WIDTH NEXT STEP";}
+            if((command!=PoseControls::None && command!=PoseControls::Pause && command!=PoseControls::Save) || panel.dragging>=0)ApplyPosture();
+        }catch(const std::exception& error){panel.status="CONFIG ERROR";std::cerr<<"[Posture] "<<error.what()<<std::endl;}
+        return true;
+    }
     auto& c=m_AnimationControls;
     if(action==GLFW_RELEASE){bool consumed=c.scrubbing;c.scrubbing=false;return consumed;}
     int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);float s=AnimationPanel::Scale(w,h);
@@ -4028,4 +4208,72 @@ void VulkanContext::ConfigureReflectionSampling(int samples,const std::string& d
 
 void VulkanContext::SetReflectionTemporal(bool enabled){
     if(m_RoughFilter){m_RoughFilter->SetTemporal(enabled);std::cout<<"[Reflection Temporal] "<<(enabled?"ON":"OFF")<<" static-only [Q]"<<std::endl;}
+}
+
+void VulkanContext::SetLegIkEnabled(bool enabled){
+    if(!m_LegIk)throw std::runtime_error("No leg IK demo loaded");
+    if(m_LegIkEnabled!=enabled){m_LegIkEnabled=enabled;m_AnimationControls.discontinuity=true;}
+    std::cout<<"[Leg IK] "<<(enabled?"ON":"OFF")<<" [Y] sole target / contact ring / leg chain"<<std::endl;
+}
+
+void VulkanContext::AdvanceAnimation(double seconds){
+    if(!m_AnimationRig)return;
+    if(!m_CharacterControl){m_AnimationControls.Advance(seconds);return;}
+    if(!m_AnimationControls.playing)return;
+    glm::vec3 direction(0);
+    auto window=m_Window.GetHandle();
+    if(m_ControlTestOverride)direction=m_ControlTestInput;
+    else if(glfwGetWindowAttrib(window,GLFW_FOCUSED)){
+        const float horizontal=float(glfwGetKey(window,GLFW_KEY_RIGHT)==GLFW_PRESS)-float(glfwGetKey(window,GLFW_KEY_LEFT)==GLFW_PRESS);
+        const float vertical=float(glfwGetKey(window,GLFW_KEY_UP)==GLFW_PRESS)-float(glfwGetKey(window,GLFW_KEY_DOWN)==GLFW_PRESS);
+        const glm::vec3 forward(-std::sin(m_CameraYaw),0,-std::cos(m_CameraYaw));
+        const auto right=glm::cross(forward,glm::vec3(0,1,0));
+        direction=glm::inverse(glm::mat3(m_CharacterPlacement))*(forward*vertical+right*horizontal);
+    }
+    m_CharacterControl->Update(float(seconds*m_AnimationControls.speed),direction,m_LegIkEnabled);
+}
+
+void VulkanContext::ApplyPosture(){
+    if(!m_CharacterControl)return;
+    m_CharacterControl->SetPoseSettings(m_PoseControls.Effective());
+    if(m_PoseControls.dragging==PoseSettings::Width)m_PoseControls.status=(m_CharacterControl->Current().active<0 && m_CharacterControl->Current().speed<.001f)?"STANDING WIDTH APPLIED":"WIDTH NEXT STEP OR STAND";
+    m_AnimationControls.discontinuity=true;
+}
+void VulkanContext::RunPosePanelTest(int frame){
+    int w,h;glfwGetWindowSize(m_Window.GetHandle(),&w,&h);const float scale=PoseControls::Scale(w,h);
+    const auto click=[&](float x,float y){AnimationPointer(12+x*scale,12+y*scale,GLFW_PRESS);AnimationPointer(12+x*scale,12+y*scale,GLFW_RELEASE);};
+    const auto slider=[&](int row,float fraction){
+        const float y=PoseControls::RowTop+row*PoseControls::RowHeight+24;
+        AnimationPointer(12+162*scale,12+y*scale,GLFW_PRESS);
+        AnimationPointer(12+(12+300*fraction)*scale,12+y*scale,GLFW_REPEAT);
+        AnimationPointer(12+(12+300*fraction)*scale,12+y*scale,GLFW_RELEASE);
+    };
+    if(frame==18)click(40,54);
+    if(frame==19)slider(PoseSettings::Drop,0);
+    if(frame==20)slider(PoseSettings::Support,.9f);
+    if(frame==21)slider(PoseSettings::Lean,.85f);
+    if(frame==22)slider(PoseSettings::Knee,.95f);
+    if(frame==23)slider(PoseSettings::Width,.47058824f);
+    if(frame==24)slider(PoseSettings::Arm,.9f);
+    if(frame==25)slider(PoseSettings::Elbow,.65f);
+    if(frame==26)click(250,54);
+    if(frame==27)click(250,54);
+    if(frame==28)click(250,PoseControls::ActionTop+12);
+    if(frame==29)click(250,PoseControls::ActionTop+12);
+    if(frame==30)click(40,PoseControls::ActionTop+12);
+    if(frame==31)click(150,54);
+    if(frame==32)click(150,PoseControls::ActionTop+12);
+    if(frame==33){m_PoseControls.visible=false;m_PoseControls.dragging=-1;}
+    if(frame==34)m_PoseControls.visible=true;
+    if(frame==35)click(40,54);
+    if(frame==36)slider(PoseSettings::Heel,.8f);
+    if(frame==37)slider(PoseSettings::Toe,.8f);
+    if(frame==38)slider(PoseSettings::RollTime,.5f);
+    if(frame==39)click(160,PoseControls::ActionTop+44);
+    if(frame==40)slider(PoseSettings::HipForward,1.f/3.f);
+    if(frame==41)slider(PoseSettings::RestTilt,.3f);
+    if(frame==42)slider(PoseSettings::HipForward,2.f/3.f);
+    if(frame==43)slider(PoseSettings::RestTilt,23.f/30.f);
+    if(frame==44)click(150,54);
+    if(frame==45)click(160,PoseControls::ActionTop+44);
 }
